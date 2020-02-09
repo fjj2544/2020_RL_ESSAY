@@ -594,7 +594,7 @@ class RL_PI2:
             plt.show()
         # self.reward_model.model_simulation(self.env,self.K[0],self.K[1],self.K[2])
         return self.K[0],self.K[1],self.K[2]
-    def rolling_optimization(self,rolling_time=5,total_step=2000):
+    def rolling_optimization(self,rolling_time=1000,total_step=2000):
         opt_times = int(total_step/rolling_time)
         self.K_after_roll_step = np.zeros(shape=(3,opt_times),dtype=np.float64)
         theta = []
@@ -617,14 +617,15 @@ class RL_PI2:
                 theta_desired.append(self.env.theta_desired)
             # plt.plot(temp)
             # plt.show()
-            plt.figure(2)
-            plt.plot( theta, label="time-theta")
-            plt.plot(theta_desired, label="time-desired_theta")
-            plt.legend(loc="best")
-            # plt.plot(theta)
-            plt.title("Rolling optimization graph %d step" % cur_step)
-            plt.savefig("./photo/Rolling_interval_%d/ROG/%d.png" % (rolling_time, cur_step))
-            plt.show()
+            if cur_step % 20 == 0:
+                plt.figure(2)
+                plt.plot( theta, label="time-theta")
+                plt.plot(theta_desired, label="time-desired_theta")
+                plt.legend(loc="best")
+                # plt.plot(theta)
+                plt.title("Rolling optimization graph %d step" % cur_step)
+                plt.savefig("./photo/Rolling_interval_%d/ROG/%d.png" % (rolling_time, cur_step))
+                plt.show()
             iterator += 1
             cur_step = iterator * rolling_time
         plt.plot(self.K_after_roll_step[0][:iterator], label="KP")
