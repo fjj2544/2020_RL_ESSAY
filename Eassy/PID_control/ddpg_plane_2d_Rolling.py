@@ -1,5 +1,7 @@
 """
-并行计算
+这里我初步尝试滚动优化
+1. 首先我会设计一个接口,可以模拟K步得到当前env
+2. 然后我会设计PI2的优化
 """
 
 import pygame
@@ -15,6 +17,7 @@ import random
 import multiprocessing as mp
 import numba
 from numba import jit
+import copy
 
 RENDER = False
 C_UPDATE_STEPS = 10
@@ -23,6 +26,31 @@ A_UPDATE_STEPS = 1
 空气动力学模型
 """
 
+
+def mkdir(path):
+    # 引入模块
+    import os
+
+    # 去除首位空格
+    path = path.strip()
+    # 去除尾部 \ 符号
+    path = path.rstrip("\\")
+
+    # 判断路径是否存在
+    # 存在     True
+    # 不存在   False
+    isExists = os.path.exists(path)
+
+    # 判断结果
+    if not isExists:
+        os.makedirs(path)
+
+        print(path + ' 创建成功')
+        return True
+    else:
+        # 如果目录存在则不创建，并提示目录已存在
+        print(path + ' 目录已存在')
+        return False
 
 # 高超声速飞行器定点飞行，高度33.5km，速度15Ma
 # alpha 飞机迎角
@@ -130,9 +158,12 @@ class PID_model():
     def __init__(self):
         self.env = Planes_Env()
 
-    def get_epsolid_reward(self, k1=1.5, k2=2.5, k3=0.5,is_test = False):
+    def get_epsolid_reward(self,env, k1=1.5, k2=2.5, k3=0.5,is_test = False):
         total_step = 2000
-        self.env.reset()
+        self.env = copy.copy(env)
+        # self.env.state = env.state
+        # self.env.observation = env.observation
+        # self.env.steps_beyond_done = env.steps_beyond_done
         alpha = []
         theta = []
         desired_theta = []
@@ -204,10 +235,50 @@ class PID_model():
         else:
             return r
 
+    def get_new_env(self, env,step_time ,k1=1.5, k2=2.5, k3=0.5):
 
-    def model_simulation(self, k1=1.5, k2=2.5, k3=0.5, iterator=0):
+
+        self.env = copy.copy(env)
+        # print("before we come ",self.env.state[1],env.state[1])
+        alpha = []
+        theta = []
+        desired_theta = []
+        q = []
+        time = []
+        i = 0
+        control = []
+        ierror = 0
+        derror_list = []
+        error_list = []
+        action_list = []
+        dez_list = []
+        while True:
+            if i == step_time:
+                break
+
+            error = self.env.theta_desired - self.env.state[1]
+            derror = -self.env.state[2]
+            error_list.append(error)
+            derror_list.append(derror)
+            ierror = ierror + error * self.env.tau
+            action = k1 * error + k2 * derror + k3 * ierror
+
+            action_list.append(action)
+            dez_list.append(self.env.delta_z)
+
+            self.env.step(np.array([action]))
+            alpha.append(self.env.state[0])
+            theta.append(self.env.state[1])
+            desired_theta.append(self.env.theta_desired)
+            q.append(self.env.state[2])
+            time.append(i)
+            control.append(action)
+            i = i + 1
+        # print("after we come ", self.env.state[1], env.state[1])
+        return self.env,theta
+    def model_simulation(self,env, k1=1.5, k2=2.5, k3=0.5, iterator=0):
         total_step = 2000
-        self.env.reset()
+        self.env = copy.copy(env)
         alpha = []
         theta = []
         desired_theta = []
@@ -278,6 +349,7 @@ class PID_model():
         plt.show()
 
 
+
 """ -----------------------------------------------------------算法伪代码-------------------------------------------------------------"""
 
 '''
@@ -339,6 +411,9 @@ roll_outs = 20  # path number
 Max_Adjust_times = 100
 class RL_PI2:
     def __init__(self):
+        ## 滚动优化,用于记录当前阶段
+        self.env = Planes_Env()
+        self.env.reset()
         # 记录每次策略迭代之后的K(包括初始化）   动态变量 每一次策略迭代刷新一次
         self.K = np.zeros((3, 1), dtype=np.float64)
         # 记录每 roll_outs 局势内的 K  动态变量 每一次策略迭代刷新一次
@@ -357,6 +432,9 @@ class RL_PI2:
         self.loss_after_training = np.zeros((training_times+Max_Adjust_times, 1), dtype=np.float64)
         # 每次策略迭代之后的K  动态变量 每一次策略迭代刷新一次
         self.K_after_training = np.zeros((3, training_times+Max_Adjust_times), dtype=np.float64)
+
+        # 每次滚动优化的K
+        self.K_after_roll_step = np.zeros((3,2000),dtype=np.float64)
         """ -----------------------------------------------------------定义算法超参数-------------------------------------------------------------"""
         # 衰减频率
         self.attenuation_step_length = 10
@@ -374,8 +452,11 @@ class RL_PI2:
         self.save_data = False
         ## 是否随机初始化
         self.random_init = False
+        ## 是否绘图
+        self.plot_photo = False
         ## 是否记录图片
         self.save_photo = True
+
 
     def data_record(self):
         np.savetxt('./data/loss_after_training.txt',self.loss_after_training)
@@ -388,8 +469,8 @@ class RL_PI2:
         # 初始化参数
         self.set_initial_value()
         # 开始训练
-        self.training()
-
+        # self.training()
+        self.rolling_optimization()
         time_end = time.time()
         print('end')
         print('total time', time_end - time_start)
@@ -414,6 +495,7 @@ class RL_PI2:
         # 初始化记录参数
         self.current_roll = 0
         self.current_training = 0
+        # 初始化滚动环境
 
     """ -----------------------------------------------------------计算轨迹回报,用于并行------------------------------------------------------------"""
     @jit(forceobj=True,nopython=True,nogil=True)
@@ -422,13 +504,10 @@ class RL_PI2:
         delta1 = np.random.normal(0, self.sigma[0], 1)
         delta2 = np.random.normal(0, self.sigma[1], 1)
         delta3 = np.random.normal(0, self.sigma[2], 1)
-
-
-
         cur_k1 = self.K[0] + delta1
         cur_k2 = self.K[1] + delta2
         cur_k3 = self.K[2] + delta3
-        loss = self.reward_model.get_epsolid_reward(cur_k1, cur_k2, cur_k3)
+        loss = self.reward_model.get_epsolid_reward(self.env,cur_k1, cur_k2, cur_k3)
         ##如果没有优势,那么我们就可以不去学习,没有必要浪费时间去学习没有用的东西
         if (self.current_training > 1 and loss > self.loss_after_training[self.current_training - 1]):
             delta1 = delta2 = delta3 = 0.0
@@ -450,7 +529,6 @@ class RL_PI2:
             self.K_roll[2, j] = res.get()[5]
             self.loss[j] = res.get()[6]
             self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
-            # print(self.k_delta,self.K_roll,self.loss)
 
     """ -----------------------------------------------------------策略改善------------------------------------------------------------"""
     def policy_improve(self):
@@ -482,19 +560,20 @@ class RL_PI2:
             # 分阶段优化 首先调整到局部最优 然后找到带有约束的满意解
             self.current_training = i
             # 方差衰减和可视化
-            if self.current_training % self.attenuation_step_length == 0  :
+            if self.current_training % self.attenuation_step_length == 0  and self.current_training != 0:
                 self.sigma = self.sigma / self.alpha  # attenuation
-                self.reward_model.model_simulation(self.K[0], self.K[1], self.K[2],self.current_training)
-                plt.plot(self.loss_after_training[self.current_training - self.attenuation_step_length:self.current_training])
-                plt.title("loss between %d and %d epoch"%(self.current_training-self.attenuation_step_length,self.current_training))
-                plt.show()
+                if self.plot_photo:
+                    self.reward_model.model_simulation(self.K[0], self.K[1], self.K[2],self.current_training)
+                    plt.plot(self.loss_after_training[self.current_training - self.attenuation_step_length:self.current_training])
+                    plt.title("loss between %d and %d epoch"%(self.current_training-self.attenuation_step_length,self.current_training))
+                    plt.show()
             # 策略迭代框架
             self.policy_evl()
-
             self.policy_improve()
             # 记录参数
             self.K_after_training[:, self.current_training] = self.K[:, 0]
-            self.loss_after_training[self.current_training] = self.reward_model.get_epsolid_reward(self.K[0], self.K[1],
+
+            self.loss_after_training[self.current_training] = self.reward_model.get_epsolid_reward(self.env,self.K[0], self.K[1],
                                                                            self.K[2])
             if self.iterator_finished():
                 break
@@ -503,39 +582,61 @@ class RL_PI2:
             if(self.current_training % self.attenuation_step_length == 0 ):
                 print(self.current_training,time.time()-first_time)
             i+=1
-
-        plt.plot(self.K_after_training[0][:self.current_training+adjust_times],label="KP")
-        plt.plot(self.K_after_training[1][:self.current_training+adjust_times],label="KD")
-        plt.plot(self.K_after_training[2][:self.current_training+adjust_times],label="KI")
+        if self.plot_photo:
+            plt.plot(self.K_after_training[0][:self.current_training+adjust_times],label="KP")
+            plt.plot(self.K_after_training[1][:self.current_training+adjust_times],label="KD")
+            plt.plot(self.K_after_training[2][:self.current_training+adjust_times],label="KI")
+            plt.legend(loc="best")
+            plt.savefig("K.png")
+            plt.show()
+            plt.plot(self.loss_after_training[:self.current_training+adjust_times])
+            plt.savefig("loss.png")
+            plt.show()
+        # self.reward_model.model_simulation(self.env,self.K[0],self.K[1],self.K[2])
+        return self.K[0],self.K[1],self.K[2]
+    def rolling_optimization(self,rolling_time=5,total_step=2000):
+        opt_times = int(total_step/rolling_time)
+        self.K_after_roll_step = np.zeros(shape=(3,opt_times),dtype=np.float64)
+        theta = []
+        theta_desired =[]
+        cur_step = 0
+        iterator = 0
+        mkdir("./photo/Rolling_interval_%d/K/" % rolling_time)
+        mkdir("./photo/Rolling_interval_%d/ROG/"%rolling_time)
+        while cur_step < total_step :
+            # print("test env 1",self.env.state[1])
+            self.training()
+            # print("test env 2 ",self.env.state[1])
+            self.K_after_roll_step[:,iterator]=self.K[:,0]
+            self.env,temp = self.reward_model.get_new_env(self.env,rolling_time,self.K[0],self.K[1],self.K[2])
+            # print(cur_step,self.K[0],self.K[1],self.K[2])
+            # print(cur_step, self.env.state[1])
+            # print(cur_step,theta)
+            for item in temp:
+                theta.append(item)
+                theta_desired.append(self.env.theta_desired)
+            # plt.plot(temp)
+            # plt.show()
+            plt.figure(2)
+            plt.plot( theta, label="time-theta")
+            plt.plot(theta_desired, label="time-desired_theta")
+            plt.legend(loc="best")
+            # plt.plot(theta)
+            plt.title("Rolling optimization graph %d step" % cur_step)
+            plt.savefig("./photo/Rolling_interval_%d/ROG/%d.png" % (rolling_time, cur_step))
+            plt.show()
+            iterator += 1
+            cur_step = iterator * rolling_time
+        plt.plot(self.K_after_roll_step[0][:iterator], label="KP")
+        plt.plot(self.K_after_roll_step[1][:iterator], label="KD")
+        plt.plot(self.K_after_roll_step[2][:iterator], label="KI")
         plt.legend(loc="best")
-        plt.savefig("K.png")
+        plt.savefig("./photo/Rolling_interval_%d/K/K.png"%rolling_time)
         plt.show()
-        plt.plot(self.loss_after_training[:self.current_training+adjust_times])
-        plt.savefig("loss.png")
-        plt.show()
-
-        ##最后输出依次
-        self.reward_model.model_simulation(self.K[0],self.K[1],self.K[2],self.current_training)
-        print(self.reward_model.get_epsolid_reward(self.K[0],self.K[1],self.K[2],True))
-
-        print(self.K[0],self.K[1],self.K[2])
 
 if __name__ == "__main__":
-    ### 简单PID测试
-    # model  = PID_model()
-    # model.model_simulation()
-
     ## 老师的路径积分
     first_time =time.time()
     poll = mp.Pool(mp.cpu_count())
     model = RL_PI2()
     model.sample_using_PI2()
-
-
-
-"""
-1. 就学习好的部分，消除差的部分，就不管理 ,如果比上一步的回报更差 
-2. 探索性初始化, 全局网格搜索 
-3. reward 存在很多鞍点 
-4. 两步优化 , 滚动优化 , 优点麻烦
-"""

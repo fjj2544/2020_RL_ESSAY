@@ -256,96 +256,10 @@ end for
 这里我想用路径积分的方法解决这个问题
 这里的环境自己的定义， 
 '''
-
 error_bound = [-10, 10]
-""" -----------------------------------------------------------代码1-------------------------------------------------------------"""
-
-
 def Z_ScoreNormalization(x, mu, sigma):
     x = (x - mu) / sigma;
     return x
-
-
-class Path_Integral():
-    def __init__(self):
-        # 环境
-        self.env = Planes_Env()
-        # 轨迹生成器,得到稀疏回报
-        self.PID_model = PID_model()
-        # 最初的K向量
-        self.K = np.array([1.5, 2.5, 0.5])
-        # 噪声方差，讲道理这里应该是一个协方差矩阵这个最开始就不能很大,但是你也不能没有探索，否则局部最优
-        ## 这个参数一定不能太大
-        self.sigma = 0.5
-        # 策略迭代次数
-        self.M = int(1e4)
-        # 每次策略评估次数
-        self.N = int(1e2)
-        # 衰减频率
-        self.ma = 10
-        # 学习率,用于衰减探索量
-        self.learning_rate = 0.85
-        # 如果确实越来越好，我可以每过一段时间输出一个图片看看
-
-    def update_k(self, reward_list, eplison_list):
-        # 计算概率分母
-        sum = 0.
-        p_list = []
-        for reward in reward_list:
-            sum += math.exp(-reward)
-        # 计算概率分子
-        for reward in reward_list:
-            p_list.append(math.exp(-reward) / sum)
-        # 对于所有变化求和进行筛选
-        for i in range(len(p_list)):
-            eplison = p_list[i] * reward_list[i]
-        return eplison
-
-    def train(self):
-        ## 策略评估然后策略改进
-        # 存储最优迭代的K，初始值就是基准值
-        plot_reward_list = []
-        best_k_vector = self.K
-        for iterator in range(self.M):
-            # 存每一幕的稀疏回报
-            reward_list = []
-            # 存储每一幕的高斯噪声
-            eplison_list = []
-            # 策略评估
-            for i in range(self.N):
-                ## 在基础k向量上面加噪声然后把噪声存储起来
-                # 我觉得应该加入一个不变的
-                if i != 0:
-                    temp_k_vector = best_k_vector[:] + random.gauss(0, self.sigma)
-                else:
-                    # 我个人认为，为了算法稳定，我一定要添加当前的参数进入学习序列，否则会有很大波动
-                    temp_k_vector = best_k_vector
-                # 每一幕的高斯噪声
-                eplison = temp_k_vector - best_k_vector
-                # 这里是一个array的list,两个完全不同
-                eplison_list.append(eplison)
-                # 交互得到回报
-                r = self.PID_model.get_epsolid_reward(temp_k_vector[0], temp_k_vector[1], temp_k_vector[2])
-                # 存储回报
-                reward_list.append(r)
-            # 结果可视化,查看是否越变越好
-            print(best_k_vector, np.mean(reward_list))
-            plot_reward_list.append(np.mean(reward_list))
-            # 0-1标准化回报，标准化回报很关键
-            reward_list = preprocessing.scale(reward_list)
-            # 下面这玩意肯定是不行了
-            # reward_list = preprocessing.minmax_scale(reward_list)
-            # 策略改进
-            best_k_vector = best_k_vector + self.update_k(reward_list, eplison_list)
-            if iterator % self.ma == 0:
-                self.sigma = self.learning_rate * self.sigma
-                self.PID_model.model_simulation(best_k_vector[0], best_k_vector[1], best_k_vector[2], iterator)
-                plt.plot(plot_reward_list, label="reward")
-                plt.title("This is the %s epoch" % str(iterator))
-                plt.legend(loc="best")
-                plt.show()
-
-
 """ -----------------------------------------------------------代码2-------------------------------------------------------------"""
 # 训练次数,也就是策略迭代次数
 training_times = 100  # training times
@@ -467,7 +381,6 @@ class RL_PI2:
                 probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
 
             temp_k = np.dot(self.k_delta, probability_weighting)
-            # print(self.sigma)
 
             # updata
             self.K = self.K + temp_k
@@ -497,33 +410,5 @@ if __name__ == "__main__":
 1. 就学习好的部分，消除差的部分，就不管理 ,如果比上一步的回报更差 
 2. 探索性初始化, 全局网格搜索 
 3. reward 存在很多鞍点 
-4. 两步优化 , 滚动优化 , 优点麻烦
-                self.current_roll = j
-                delta1 = np.random.normal(0, self.sigma[0], 1)
-                delta2 = np.random.normal(0, self.sigma[1], 1)
-                delta3 = np.random.normal(0, self.sigma[2], 1)
-                cur_k1 = self.K[0] + delta1
-                cur_k2 = self.K[1] +delta2
-                cur_k3 = self.K[2] +delta3
-                loss = self.reward_model.get_epsolid_reward(cur_k1,cur_k2,cur_k3)
-                # if( self.current_training>1 and  loss > self.loss_after_training[self.current_training-1] ):
-                #    delta1 = delta2 = delta3 = 0.0
-                #    cur_k1 = self.K[0] + delta1
-                #    cur_k2 = self.K[1] + delta2
-                #    cur_k3 = self.K[2] + delta3
-                self.k_delta[0, j] = delta1
-                self.k_delta[1, j] = delta2
-                self.k_delta[2, j] = delta3
-                self.K_roll[0, j] = cur_k1
-                self.K_roll[1, j] = cur_k2
-                self.K_roll[2, j] = cur_k3
-                self.loss[j] = loss
-                # 为啥这里要防止同样的回报
-                # 不会学习更差的
-                # if self.current_training > 1:
-                #     if(self.loss[j] >= self.loss_after_training[self.current_training-1]):
-                #         self.k_delta[0, j] = 0
-                #         self.k_delta[1, j] = 0
-                #         self.k_delta[2, j] = 0
-                self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
+4. 两步优化 , 滚动优化 , 有点麻烦
 """
