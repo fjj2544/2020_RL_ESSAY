@@ -53,6 +53,9 @@ def mkdir(path):
         print(path + ' 目录已存在')
         return False
 
+"""
+空气动力学模型
+"""
 
 class Planes_Env:
     def __init__(self):
@@ -135,7 +138,6 @@ class Planes_Env:
         return self.observation, self.reward, done
 
 
-
 ''' 要有行之有效的方法,能够解决一类自动整定问题 随机设置一个初始点都能收敛到一个较好的点  '''
 ## 目标量,采用动态目标
 Overshoot_target = 1e-3
@@ -153,7 +155,7 @@ class PID_model():
     def __init__(self):
         self.env = Planes_Env()
 
-    def get_epsolid_reward(self,env, k1=1.5, k2=2.5, k3=0.5):
+    def get_epsolid_reward(self,env, k1=1.5, k2=2.5, k3=0.5,is_test = False):
         total_step = 2000
         self.env = copy.copy(env)
         # self.env.state = env.state
@@ -208,14 +210,15 @@ class PID_model():
                 count += 1
 
         # 超调量 kp
-        Overshoot= max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
-        Overshoot = 0 if Overshoot < Overshoot_target else (Overshoot-Overshoot_target)/Overshoot_target
+        Overshoot = max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
+        Overshoot = 0 if Overshoot < Overshoot_target else (Overshoot - Overshoot_target) / Overshoot_target
         # 调整时间
-        ts = 0 if ts<=ts_target else (ts-ts_target)/ts_target
+        ts = 0 if ts <= ts_target else (ts - ts_target) / ts_target
         r = Overshoot + ts
         return r
 
     def get_new_env(self, env,step_time ,k1=1.5, k2=2.5, k3=0.5):
+
 
         self.env = copy.copy(env)
         # print("before we come ",self.env.state[1],env.state[1])
@@ -254,8 +257,8 @@ class PID_model():
             control.append(action)
             i = i + 1
         # print("after we come ", self.env.state[1], env.state[1])
-        return self.env,theta
-    def model_simulation(self, k1=1.5, k2=2.5, k3=0.5, iterator=0,total_step=1000):
+        return self.env,alpha, dez_list, theta, desired_theta
+    def model_simulation( self,k1=1.5, k2=2.5, k3=0.5, total_step=200):
         self.env.reset()
         alpha = []
         theta = []
@@ -269,6 +272,8 @@ class PID_model():
         error_list = []
         action_list = []
         dez_list = []
+
+
         while i < total_step:
             """ FOR DEBUG """
             # if i % 10 == 0:
@@ -293,79 +298,9 @@ class PID_model():
             control.append(action)
 
             i = i + 1
-
-            # np.savetxt()
-        # "绘制$\\alpha$曲线"
-        # plt.xticks(fontproperties='Times New Roman')
-        # plt.yticks(fontproperties='Times New Roman')
-        # plt.xlabel("Number of Iterations")
-        # plt.ylabel("Attack Angle")
-        # plt.plot(alpha, label="$\\alpha$")
-        # plt.legend(loc='best', prop={'family': 'Times New Roman'})
-        # # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
-        # plt.title("$\\alpha$ In %s Epoch " % str(iterator), fontdict={'family': 'Times New Roman'})
-        # plt.show()
-        #
-        # "绘制$\\delta_z$曲线"
-        #
-        # plt.xticks(fontproperties='Times New Roman')
-        # plt.yticks(fontproperties='Times New Roman')
-        # plt.xlabel("Number of Iterations")
-        # plt.ylabel("Elevator")
-        # plt.plot(dez_list, label="$\\delta_z$")
-        # plt.title("$\\delta_z$  In %s epoch " % str(iterator), fontdict={'family': 'Times New Roman'})
-        # plt.legend(loc='best', prop={'family': 'Times New Roman'})
-        # plt.show()
-        "绘制theta曲线"
-
-        plt.figure(num=2)
-
-        plt.xticks(fontproperties='Times New Roman')
-        plt.yticks(fontproperties='Times New Roman')
-        plt.xlabel("Number of Iterations")
-        plt.ylabel("Pitch Angle")
-
-        plt.plot(theta, label="time-theta")
-        plt.plot(desired_theta, label="time-desired_theta")
-        plt.legend(loc='best', prop={'family': 'Times New Roman'})
-        plt.title("$ \\theta$  In %s epoch " % str(iterator), fontdict={'family': 'Times New Roman'})
-        plt.savefig("%sepoch.pdf" % iterator)
-        plt.show()
         return alpha, dez_list, theta, desired_theta
 
 
-""" -----------------------------------------------------------算法伪代码-------------------------------------------------------------"""
-
-'''
-首先参数化控制策略就是简单的PID控制
-离散化状态空间 ed e ei
-Parameterize the control using (15);
-Discretize the state space using (18);
-for each initial state:  这个地方指的是 state = (e,de,ie)
-    initiate the parameter vector K;
-    initiate the Gaussian variance Σ;
-    for iteration = 1, …, M:
-        for i = 1, …, N:
-            generate a path τi using Gaussian noise εi with
-            variance Σ;
-            obtain the path loss S (τi ) using (14);
-        end for
-        update parameter vector K using (13) and (17);
-        if iteration%Mα == 0:
-            attenuate Gaussian variance Σ using (19);
-        end if
-    end for
-end for
-
-'''
-## 暂时可以用这个尝试否则无法离散化
-## 离散化只不过是离散化初始点的动作，如果从这个动作开始应该以怎么样的参数继续能达到更好地效果
-'''
-这里我想用路径积分的方法解决这个问题
-这里的环境自己的定义， 
-'''
-
-error_bound = [-10, 10]
 """ -----------------------------------------------------------随机初始化参数-------------------------------------------------------------"""
 Ki_Min = 0
 Ki_Max = 100.0
@@ -397,6 +332,7 @@ class RL_PI2:
     def __init__(self):
         ## 滚动优化,用于记录当前阶段
         self.env = Planes_Env()
+
         # 记录每次策略迭代之后的K(包括初始化）   动态变量 每一次策略迭代刷新一次
         self.K = np.zeros((3, 1), dtype=np.float64)
         # 记录每 roll_outs 局势内的 K  动态变量 每一次策略迭代刷新一次
@@ -420,9 +356,9 @@ class RL_PI2:
         self.K_after_roll_step = np.zeros((3,2000),dtype=np.float64)
         """ -----------------------------------------------------------定义算法超参数-------------------------------------------------------------"""
         # 衰减频率
-        self.attenuation_step_length = 1
+        self.attenuation_step_length = 10
         # 衰减系数 这里我觉得可以加入先验知识,不等权衰减
-        self.alpha = 1/0.85
+        self.alpha = 0.85
         # 记录当前是第几幕
         self.current_roll = 0
         # 记录当前第几次策略迭代
@@ -438,9 +374,7 @@ class RL_PI2:
         ## 是否绘图
         self.plot_photo = False
         ## 是否记录图片
-        self.save_photo = False
-        ## 是否输出训练阶段图进行DEBUG
-        self.DEBUG = True
+        self.save_photo = True
 
 
     def data_record(self):
@@ -470,9 +404,9 @@ class RL_PI2:
             self.K[1] = random.uniform(Kd_Min,Kd_Max)
             self.K[2] = random.uniform(Ki_Min,Ki_Max)
         else:
-            self.K[0] = 1.5
-            self.K[1] = 2.5
-            self.K[2] = 0.5
+            self.K[0] = 0
+            self.K[1] = 0
+            self.K[2] = 0
         # 初始化方差
         self.sigma[0] = 1.0
         self.sigma[1] = 0.3
@@ -482,6 +416,7 @@ class RL_PI2:
         self.current_training = 0
         # 初始化滚动环境
         self.env.reset()
+
     """ -----------------------------------------------------------计算轨迹回报,用于并行------------------------------------------------------------"""
     @jit(forceobj=True,nopython=True,nogil=True)
     def cal_trajectory_loss(self, j):
@@ -493,14 +428,12 @@ class RL_PI2:
         cur_k2 = self.K[1] + delta2
         cur_k3 = self.K[2] + delta3
         loss = self.reward_model.get_epsolid_reward(self.env,cur_k1, cur_k2, cur_k3)
-
-        # # ##如果没有优势,那么我们就可以不去学习,没有必要浪费时间去学习没有用的东西,小范围卡死
-        # if (self.current_training > 1 and loss > self.loss_after_training[self.current_training - 1]):
-        #     delta1 = delta2 = delta3 = 0.0
-        #     cur_k1 = self.K[0] + delta1
-        #     cur_k2 = self.K[1] + delta2
-        #     cur_k3 = self.K[2] + delta3
-
+        ##如果没有优势,那么我们就可以不去学习,没有必要浪费时间去学习没有用的东西
+        if (self.current_training > 1 and loss > self.loss_after_training[self.current_training - 1]):
+            delta1 = delta2 = delta3 = 0.0
+            cur_k1 = self.K[0] + delta1
+            cur_k2 = self.K[1] + delta2
+            cur_k3 = self.K[2] + delta3
         return delta1,delta2,delta3,cur_k1,cur_k2,cur_k3,loss
     """ -----------------------------------------------------------策略评估------------------------------------------------------------"""
     @jit(forceobj=True, nopython=True, nogil=True,parallel=True)
@@ -535,7 +468,7 @@ class RL_PI2:
         flag1 = sum((self.K_after_training[:, self.current_training - 1] - self.K_after_training[:,
                                                                    self.current_training]) ** 2) <= 1e-6
         flag2 = self.loss_after_training[self.current_training]
-        if flag1 < 1e-6 and flag2 < 1e-1:
+        if flag1 < 1e-6 and flag2 < 1e-3:
             return True
         else :
             return False
@@ -548,19 +481,11 @@ class RL_PI2:
             self.current_training = i
             # 方差衰减和可视化
             if self.current_training % self.attenuation_step_length == 0  and self.current_training != 0:
-                self.sigma = self.sigma * self.alpha  # attenuatioz
-                if  self.current_training %10==0 and self.DEBUG:
+                self.sigma = self.sigma / self.alpha  # attenuation
+                if self.current_training %10 == 0:
                     plt.plot(self.loss_after_training[self.current_training - 10:self.current_training])
-                    plt.title("loss between %d and %d epoch" % (self.current_training - 10, self.current_training))
+                    plt.title("loss between %d and %d epoch"%(self.current_training - 10,self.current_training))
                     plt.show()
-
-                    plt.plot(self.K_after_training[0][self.current_training - 10:self.current_training], label="KP")
-                    plt.plot(self.K_after_training[1][self.current_training - 10:self.current_training], label="KD")
-                    plt.plot(self.K_after_training[2][self.current_training - 10:self.current_training], label="KI")
-                    plt.title("K between %d and %d epoch" % (self.current_training - 10, self.current_training))
-                    plt.legend(loc="best")
-                    plt.show()
-
             # 策略迭代框架
             self.policy_evl()
             self.policy_improve()
@@ -576,7 +501,7 @@ class RL_PI2:
             if(self.current_training % self.attenuation_step_length == 0 ):
                 print(self.current_training,time.time()-first_time)
             i+=1
-        if self.plot_photo and self.current_training != 0:
+        if self.plot_photo and self.current_training !=0:
             plt.plot(self.K_after_training[0][:self.current_training+adjust_times],label="KP")
             plt.plot(self.K_after_training[1][:self.current_training+adjust_times],label="KD")
             plt.plot(self.K_after_training[2][:self.current_training+adjust_times],label="KI")
@@ -586,68 +511,140 @@ class RL_PI2:
             plt.plot(self.loss_after_training[:self.current_training+adjust_times])
             plt.savefig("loss.png")
             plt.show()
-        print(self.K)
+        # self.reward_model.model_simulation(self.env,self.K[0],self.K[1],self.K[2])
         return self.K[0],self.K[1],self.K[2]
-    def rolling_optimization(self,rolling_interval=200,total_step=200):
-        opt_times = int(total_step/rolling_interval) # 优化次数
-        theta = []
-        theta_desired =[]
-        cur_step = 0
+    def rolling_optimization(self,rolling_time=20,total_step=200):
+        opt_times = int(total_step/rolling_time)
+        theta_list = []
+        theta_desired_list =[]
+        alpha_list =[]
+        delta_z_list = []
         iterator = 0
-        mkdir("./photo/simple_reward/Rolling_interval_%d/K/" % rolling_interval)
-        mkdir("./photo/simple_reward/Rolling_interval_%d/ROG/"%rolling_interval)
-        # 记录初始K值,用于对比
         self.K_after_roll_step[:, iterator] = self.K[:, 0]
-        while iterator < opt_times  :
+        while iterator < opt_times :
             # print("test env 1",self.env.state[1])
             self.training()
-            # print("test env 2 ",self.env.state[1])
+            # print("test env 2 ",self.env.state[1]) alpha, dez_list, theta, desired_theta
             iterator += 1
-            cur_step = iterator * rolling_interval
-
+            cur_step = iterator * rolling_time
             self.K_after_roll_step[:,iterator]=self.K[:,0]
-            self.env,temp = self.reward_model.get_new_env(self.env,rolling_interval,self.K[0],self.K[1],self.K[2])
+            self.env,alpha, delta_z, theta, theta_desired = self.reward_model.get_new_env(self.env,rolling_time,self.K[0],self.K[1],self.K[2])
 
-            # print(cur_step,self.K[0],self.K[1],self.K[2])
-            # print(cur_step, self.env.state[1])
-            # print(cur_step,theta)
-            for item in temp:
-                theta.append(item)
-                theta_desired.append(self.env.theta_desired)
-            # plt.plot(temp)
-            # plt.show()
-            if cur_step % 20 == 0 and self.plot_photo:
-                plt.figure(2)
-                plt.plot( theta,'b+', label="time-theta")
-                plt.plot(theta_desired,'r', label="time-desired_theta")
-                plt.legend(loc="best")
-                # plt.plot(theta)
-                plt.title("Rolling optimization graph After Opt %d time" % iterator )
-                plt.savefig("./photo/simple_reward/Rolling_interval_%d/ROG/%d.png" % (rolling_interval, cur_step))
-                plt.show()
+            for item in alpha:
+                alpha_list.append(item)
+            for item in delta_z:
+                delta_z_list.append(item)
+            for item in theta:
+                theta_list.append(item)
+            for(item) in theta_desired:
+                theta_desired_list.append(item)
         plt.figure(2)
-        plt.plot(theta, 'b+', label="time-theta")
-        plt.plot(theta_desired, 'r', label="time-desired_theta")
+        plt.plot(theta_list, 'b+', label="time-theta")
+        plt.plot(theta_desired_list, 'r', label="time-desired_theta")
         plt.legend(loc="best")
-        # plt.plot(theta)
-        plt.title("Rolling optimization graph After Opt %d time" % iterator)
+        plt.title("Rolling optimization graph After %d Opt" % iterator)
         plt.show()
-
         plt.plot(self.K_after_roll_step[0][:iterator+1], label="KP")
         plt.plot(self.K_after_roll_step[1][:iterator+1], label="KD")
         plt.plot(self.K_after_roll_step[2][:iterator+1], label="KI")
         plt.legend(loc="best")
-        plt.savefig("./photo/simple_reward/Rolling_interval_%d/K/K.png"%rolling_interval)
+        save_figure("./photo/exp1/","K_Rolling_interval_%d.pdf"%rolling_time)
         plt.show()
-##
+        return alpha_list,delta_z_list,theta_list,theta_desired_list
+
+def save_data(dir,name,data):
+    mkdir(dir)
+    np.savetxt(dir+name,data)
+def read_data(dir):
+    data = np.loadtxt(dir)
+    return data
+def save_figure(dir,name):
+    mkdir(dir)
+    plt.savefig(dir+name,bbox_inches = 'tight')
+
+def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list):
+    label = ["PI2+ Rolling Optimization ","PI2 ","Adjusted parameter"]
+    color = ["r","g","b","k"]
+    line_style = ["-","--",":","-."]
+
+    "绘制$\\alpha$曲线"
+    plt.xticks(fontproperties='Times New Roman')
+    plt.yticks(fontproperties='Times New Roman')
+    plt.xlabel("Time$(0.02s)$")
+
+    plt.ylabel("Attack Angle $(Degree)$")
+    for i in range(3):
+        plt.plot(alpha_list[i], label=label[i],color=color[i],linestyle=line_style[i])
+
+    plt.legend(loc='best', prop={'family': 'Times New Roman'})
+    # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
+    plt.title("$\\alpha$ Control Curve ", fontdict={'family': 'Times New Roman'})
+    save_figure("./photo/exp1/", "alpha_Curve.pdf")
+    plt.show()
+
+    "绘制delta_z曲线"
+
+    plt.xticks(fontproperties='Times New Roman')
+    plt.yticks(fontproperties='Times New Roman')
+    plt.xlabel("Time$(0.02s)$")
+
+    plt.ylabel("Pitch Rudder Angle $(Degree)$")
+    for i in range(3):
+        plt.plot(delta_z_list[i], label=label[i], color=color[i], linestyle=line_style[i])
+
+    plt.title("$\\delta_z$  Control Curve ", fontdict={'family': 'Times New Roman'})
+    plt.legend(loc='best', prop={'family': 'Times New Roman'})
+    save_figure("./photo/exp1/", "delta_z_Curve.pdf")
+    plt.show()
+    "绘制theta曲线"
+    plt.figure(num=2)
+
+    plt.xticks(fontproperties='Times New Roman')
+    plt.yticks(fontproperties='Times New Roman')
+    plt.xlabel("Time$(0.02s)$")
+
+    plt.ylabel("Pitch Angle $(Degree)$")
+
+    for i in range(3):
+        plt.plot(theta_list[i], label=label[i], color=color[i], linestyle=line_style[i])
+    plt.plot(theta_desire_list[0], label="$\\theta_{target}$", linestyle="--")
+    plt.legend(loc='best', prop={'family': 'Times New Roman'})
+    plt.title("$ \\theta$  Control Curve ", fontdict={'family': 'Times New Roman'})
+    save_figure("./photo/exp1/", "theta_Curve.pdf")
+    plt.show()
 if __name__ == "__main__":
     ## 老师的路径积分
     first_time =time.time()
     poll = mp.Pool(mp.cpu_count())
     model = RL_PI2()
     reward_model = PID_model()
-    # ## 对照组
+    alpha_list =[]
+    delta_z_list = []
+    theta_list = []
+    theta_desire_list =[]
+
+
+
+    ## 第1组优化10次
     model.set_initial_value()
-    # model.rolling_optimization(rolling_interval=200,total_step=200)
-    K = model.training()
-    reward_model.model_simulation(K[0],K[1],K[2],total_step=200)
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=20, total_step=1000)
+    alpha_list.append(alpha)
+    delta_z_list.append(delta_z)
+    theta_list.append(theta)
+    theta_desire_list.append(theta_desired)
+    ## 第2组仅仅优化一次
+    model.set_initial_value()
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=1000, total_step=1000)
+    alpha_list.append(alpha)
+    delta_z_list.append(delta_z)
+    theta_list.append(theta)
+    theta_desire_list.append(theta_desired)
+    ## 第3组对照组
+    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(1.5,2.5,0.5,1000)
+    alpha_list.append(alpha)
+    delta_z_list.append(delta_z)
+    theta_list.append(theta)
+    theta_desire_list.append(theta_desired)
+
+    ## 绘图
+    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list)
