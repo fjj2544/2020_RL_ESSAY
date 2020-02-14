@@ -228,8 +228,8 @@ class PID_model():
         ts = 0 if ts<=ts_target else ts
         # r =  weight/Overshoot_boundOvershoot + weight/Static_error_bound*Static_error + weight/Waveform_oscillation_bound*Waveform_oscillation +ts
 
-        # r = weight*Overshoot/Overshoot_target + weight*ts/ts_target
-        r = Overshoot + ts
+        r = weight*Overshoot/Overshoot_target + weight*ts/ts_target
+        # r = Overshoot + ts
         # 判断是否满足约束,约束判准
         if is_test:
             return ts

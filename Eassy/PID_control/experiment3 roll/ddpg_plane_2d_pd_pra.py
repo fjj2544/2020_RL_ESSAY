@@ -315,6 +315,8 @@ class RL_PI2:
         self.loss_after_training = np.zeros((training_times+Max_Adjust_times, 1), dtype=np.float64)
         # 每次策略迭代之后的K  动态变量 每一次策略迭代刷新一次
         self.K_after_training = np.zeros((3, training_times+Max_Adjust_times), dtype=np.float64)
+        # 记录每次滚动优化之后的K值
+        self.K_after_roll_step = np.zeros((3, 2000), dtype=np.float64)
         """ -----------------------------------------------------------定义算法超参数-------------------------------------------------------------"""
         # 衰减频率
         self.Iteration_step_length = Iteration_step_length
@@ -367,9 +369,9 @@ class RL_PI2:
             self.K[1] = random.uniform(Kd_Min,Kd_Max)
             self.K[2] = random.uniform(Ki_Min,Ki_Max)
         else:
-            self.K[0] = 10
-            self.K[1] = 10
-            self.K[2] = 10
+            self.K[0] = 1.5
+            self.K[1] = 2.5
+            self.K[2] = 0.5
         # 初始化方差
         self.sigma[0] = 1.0
         self.sigma[1] = 0.3
@@ -489,7 +491,7 @@ class RL_PI2:
         plt.xlabel("Number of Iterations")
         plt.ylabel("$\mathcal{K}$ Value")
         for i in range(3):
-            plt.plot(self.K_after_training[i][:self.current_training + adjust_times], label=label[i],color=color[i],linestyle=line_style[i],marker=marker[i])
+            plt.plot(self.K_after_training[i][:self.current_training + 1], label=label[i],color=color[i],linestyle=line_style[i],marker=marker[i])
         plt.legend(loc='best', prop={'family': 'Times New Roman'})
         # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
         plt.title("$\mathcal{K}$ Iteration Graph", fontdict={'family': 'Times New Roman'})
@@ -501,12 +503,61 @@ class RL_PI2:
         plt.yticks(fontproperties='Times New Roman')
         plt.xlabel("Number of Iterations")
         plt.ylabel("Loss")
-        plt.plot(self.loss_after_training[:self.current_training], label="Loss",color='r',marker="*")
+        plt.plot(self.loss_after_training[:self.current_training+1], label="Loss",color='r',marker="*")
         plt.legend(loc='best', prop={'family': 'Times New Roman'})
         plt.title("Loss Function Curve", fontdict={'family': 'Times New Roman'})
         save_figure("./photo/exp1/", "loss.pdf")
         plt.show()
+    def rolling_optimization(self,rolling_interval=200,total_step=200):
+        opt_times = int(total_step/rolling_interval) # 优化次数
+        theta = []
+        theta_desired =[]
+        iterator = 0
+        mkdir("./photo/simple_reward/Rolling_interval_%d/K/" % rolling_interval)
+        mkdir("./photo/simple_reward/Rolling_interval_%d/ROG/"%rolling_interval)
+        # 记录初始记录滚动优化的K值用于对比
+        self.K_after_roll_step[:, iterator] = self.K[:, 0]
+        while iterator < opt_times  :
+            # print("test env 1",self.env.state[1])
+            self.training()
+            # print("test env 2 ",self.env.state[1])
+            iterator += 1
+            cur_step = iterator * rolling_interval
 
+            self.K_after_roll_step[:,iterator]=self.K[:,0]
+            self.env,temp = self.reward_model.get_new_env(self.env,rolling_interval,self.K[0],self.K[1],self.K[2])
+
+            # print(cur_step,self.K[0],self.K[1],self.K[2])
+            # print(cur_step, self.env.state[1])
+            # print(cur_step,theta)
+            for item in temp:
+                theta.append(item)
+                theta_desired.append(self.env.theta_desired)
+            # plt.plot(temp)
+            # plt.show()
+            if cur_step % 20 == 0 and self.plot_photo:
+                plt.figure(2)
+                plt.plot( theta,'b+', label="time-theta")
+                plt.plot(theta_desired,'r', label="time-desired_theta")
+                plt.legend(loc="best")
+                # plt.plot(theta)
+                plt.title("Rolling optimization graph After Opt %d time" % iterator )
+                plt.savefig("./photo/simple_reward/Rolling_interval_%d/ROG/%d.png" % (rolling_interval, cur_step))
+                plt.show()
+        plt.figure(2)
+        plt.plot(theta, 'b+', label="time-theta")
+        plt.plot(theta_desired, 'r', label="time-desired_theta")
+        plt.legend(loc="best")
+        # plt.plot(theta)
+        plt.title("Rolling optimization graph After Opt %d time" % iterator)
+        plt.show()
+
+        plt.plot(self.K_after_roll_step[0][:iterator+1], label="KP")
+        plt.plot(self.K_after_roll_step[1][:iterator+1], label="KD")
+        plt.plot(self.K_after_roll_step[2][:iterator+1], label="KI")
+        plt.legend(loc="best")
+        plt.savefig("./photo/simple_reward/Rolling_interval_%d/K/K.png"%rolling_interval)
+        plt.show()
 def mkdir(path):
     # 引入模块
     import os
@@ -756,9 +807,11 @@ if __name__ == "__main__":
     first_time =time.time()
 
     poll = mp.Pool(mp.cpu_count())
-    model = RL_PI2()
+    model = RL_PI2(alpha=1/0.85,Iteration_step_length=1)
     reward_model = PID_model()
 
-    alpha_list, delta_z_list, theta_list, theta_desire_list,k_list,loss_list,train_time = get_data_from_exp()
-    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list)
-    plot_loss_k(k_list,loss_list,train_time)
+    model.set_initial_value()
+    model.training()
+    # alpha_list, delta_z_list, theta_list, theta_desire_list,k_list,loss_list,train_time = get_data_from_exp()
+    # plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list)
+    # plot_loss_k(k_list,loss_list,train_time)
