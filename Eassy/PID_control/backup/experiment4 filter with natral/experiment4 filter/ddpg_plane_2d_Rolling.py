@@ -20,6 +20,9 @@ import numba
 from numba import jit
 import copy
 
+
+
+Init_K = [1000,1000,1000]
 RENDER = False
 C_UPDATE_STEPS = 10
 A_UPDATE_STEPS = 1
@@ -105,12 +108,9 @@ class Planes_Env:
         observation_pre = theta - self.theta_desired
         ## 非线性约束
         self.delta_z_change = np.clip(action,self.delta_z_threhold_min,self.delta_z_threhold_max) - self.last_delta_z
-        self.delta_z = np.clip(self.delta_z_change,-self.max_delta_z_change,self.max_delta_z_change) +self.last_delta_z
+        self.delta_z = np.clip(self.delta_z_change ,-self.max_delta_z_change,self.max_delta_z_change) +self.last_delta_z
         self.last_delta_z = self.delta_z
 
-        # self.delta_z_change = np.clip(action, self.delta_z_threhold_min, self.delta_z_threhold_max) - self.delta_z
-        # self.delta_z =  self.delta_z_change  + self.delta_z #python += 和 =  a + b不一样我无语了
-        # self.delta_z = np.clip(action,self.delta_z_threhold_min,self.delta_z_threhold_max)
         # 动力学方程 攻角alpha，俯仰角theta 俯仰角速度q  舵偏delta_z
         alpha_dot = q - self.b_alpha * alpha - self.b_delta_z * self.delta_z
         theta_dot = q
@@ -121,7 +121,7 @@ class Planes_Env:
 
         theta = theta + self.tau * theta_dot
         observation_cur = theta - self.theta_desired
-        alpha = np.clip(alpha + self.tau * alpha_dot,self.alpha_threshold_min,self.alpha_threshold_max)
+        alpha = np.clip(alpha + self.tau * alpha_dot  ,self.alpha_threshold_min,self.alpha_threshold_max)
 
 
         self.steps_beyond_done += 1
@@ -356,7 +356,7 @@ class RL_PI2:
         self.K_after_roll_step = np.zeros((3,2000),dtype=np.float64)
         """ -----------------------------------------------------------定义算法超参数-------------------------------------------------------------"""
         # 衰减频率
-        self.attenuation_step_length = 10
+        self.attenuation_step_length = 1
         # 衰减系数 这里我觉得可以加入先验知识,不等权衰减
         self.alpha = 0.85
         # 记录当前是第几幕
@@ -376,6 +376,8 @@ class RL_PI2:
         ## 是否记录图片
         self.save_photo = True
 
+        ##记录更新的初值
+        self.K0 = np.zeros((3, 1), dtype=np.float64)
 
     def data_record(self):
         np.savetxt('./data/loss_after_training.txt',self.loss_after_training)
@@ -397,16 +399,17 @@ class RL_PI2:
         if self.save_data:
             self.data_record()
 
-    def set_initial_value(self):
+    def set_initial_value(self,INIT_K=[1.5,2.5,0.5]):
 
         if self.random_init:
             self.K[0] = random.uniform(Kp_Min,Kp_Max)
             self.K[1] = random.uniform(Kd_Min,Kd_Max)
             self.K[2] = random.uniform(Ki_Min,Ki_Max)
         else:
-            self.K[0] = 0
-            self.K[1] = 0
-            self.K[2] = 0
+            self.K0 = INIT_K
+            self.K[0] = INIT_K[0]
+            self.K[1] = INIT_K[1]
+            self.K[2] = INIT_K[2]
         # 初始化方差
         self.sigma[0] = 1.0
         self.sigma[1] = 0.3
@@ -512,7 +515,7 @@ class RL_PI2:
             plt.savefig("loss.png")
             plt.show()
         # self.reward_model.model_simulation(self.env,self.K[0],self.K[1],self.K[2])
-        return self.K[0],self.K[1],self.K[2]
+        return self.K[0],self.K[1],self.K[2],self.current_training+1
     def rolling_optimization(self,rolling_time=20,total_step=200):
         opt_times = int(total_step/rolling_time)
         theta_list = []
@@ -521,9 +524,11 @@ class RL_PI2:
         delta_z_list = []
         iterator = 0
         self.K_after_roll_step[:, iterator] = self.K[:, 0]
+        total_time = 0
         while iterator < opt_times :
             # print("test env 1",self.env.state[1])
-            self.training()
+            k = self.training()
+            total_time = total_time + k[3]
             # print("test env 2 ",self.env.state[1]) alpha, dez_list, theta, desired_theta
             iterator += 1
             cur_step = iterator * rolling_time
@@ -538,18 +543,40 @@ class RL_PI2:
                 theta_list.append(item)
             for(item) in theta_desired:
                 theta_desired_list.append(item)
+            if iterator % 2==0:
+                plt.figure(2)
+                plt.plot(theta_list, 'b+', label="time-theta")
+                plt.plot(theta_desired_list, 'r', label="time-desired_theta")
+                plt.legend(loc="best")
+                plt.title("Rolling optimization graph After %d Opt" % iterator)
+                plt.show()
         plt.figure(2)
         plt.plot(theta_list, 'b+', label="time-theta")
         plt.plot(theta_desired_list, 'r', label="time-desired_theta")
         plt.legend(loc="best")
         plt.title("Rolling optimization graph After %d Opt" % iterator)
         plt.show()
-        plt.plot(self.K_after_roll_step[0][:iterator+1], label="KP")
-        plt.plot(self.K_after_roll_step[1][:iterator+1], label="KD")
-        plt.plot(self.K_after_roll_step[2][:iterator+1], label="KI")
-        plt.legend(loc="best")
-        save_figure("./photo/exp1/","K_Rolling_interval_%d.pdf"%rolling_time)
+
+        label = ["Kp", "Kd", "Ki"]
+        color = ["r", "g", "b", "k"]
+        line_style = ["-", "--", ":", "-."]
+        marker = ['*', '^', 'h']
+        "绘制K曲线"
+        plt.xticks(fontproperties='Times New Roman')
+        plt.yticks(fontproperties='Times New Roman')
+        plt.xlabel("Number of Rolling Optimization")
+        plt.ylabel("$\mathcal{K}^{*}$ Value")
+        for i in range(3):
+            plt.plot(self.K_after_roll_step[i][:iterator+1], label=label[i], color=color[i],
+                     linestyle=line_style[i], marker=marker[i])
+        plt.legend(loc='best', prop={'family': 'Times New Roman'})
+        # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
+        plt.title("$\mathcal{K}^{*}$ Iteration Graph", fontdict={'family': 'Times New Roman'})
+        save_figure("./photo/exp1/", "K_Rolling_interval_%d_%d_%d_%d.pdf"%(rolling_time,self.K0[0],self.K0[1],self.K0[2]))
         plt.show()
+
+
+        print(total_time)
         return alpha_list,delta_z_list,theta_list,theta_desired_list
 
 def save_data(dir,name,data):
@@ -562,10 +589,10 @@ def save_figure(dir,name):
     mkdir(dir)
     plt.savefig(dir+name,bbox_inches = 'tight')
 
-def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list):
-    label = ["PI2+ Rolling Optimization ","PI2 ","Adjusted parameter"]
+def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number = 3):
+    label = ["$\\mathcal{K}_0=[0\ 0\ 0]^{T}$ ","$\\mathcal{K}_0=[10\ 10\ 10]^{T}$ ","$\\mathcal{K}_0=[100\ 100\ 100]^{T}$","Reference parameter"]
     color = ["r","g","b","k"]
-    line_style = ["-","--",":","-."]
+    line_style = ["-","-.",":","--"]
 
     "绘制$\\alpha$曲线"
     plt.xticks(fontproperties='Times New Roman')
@@ -573,7 +600,7 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list):
     plt.xlabel("Time$(0.02s)$")
 
     plt.ylabel("Attack Angle $(Degree)$")
-    for i in range(3):
+    for i in range(figure_number):
         plt.plot(alpha_list[i], label=label[i],color=color[i],linestyle=line_style[i])
 
     plt.legend(loc='best', prop={'family': 'Times New Roman'})
@@ -589,7 +616,7 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list):
     plt.xlabel("Time$(0.02s)$")
 
     plt.ylabel("Pitch Rudder Angle $(Degree)$")
-    for i in range(3):
+    for i in range(figure_number):
         plt.plot(delta_z_list[i], label=label[i], color=color[i], linestyle=line_style[i])
 
     plt.title("$\\delta_z$  Control Curve ", fontdict={'family': 'Times New Roman'})
@@ -605,13 +632,14 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list):
 
     plt.ylabel("Pitch Angle $(Degree)$")
 
-    for i in range(3):
+    for i in range(figure_number):
         plt.plot(theta_list[i], label=label[i], color=color[i], linestyle=line_style[i])
     plt.plot(theta_desire_list[0], label="$\\theta_{target}$", linestyle="--")
     plt.legend(loc='best', prop={'family': 'Times New Roman'})
-    plt.title("$ \\theta$  Control Curve ", fontdict={'family': 'Times New Roman'})
+    plt.title("$ \\theta$  Control Curve With Filter PI2", fontdict={'family': 'Times New Roman'})
     save_figure("./photo/exp1/", "theta_Curve.pdf")
     plt.show()
+
 if __name__ == "__main__":
     ## 老师的路径积分
     first_time =time.time()
@@ -623,28 +651,50 @@ if __name__ == "__main__":
     theta_list = []
     theta_desire_list =[]
 
-
-
     ## 第1组优化10次
-    model.set_initial_value()
-    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=20, total_step=1000)
+    model.set_initial_value([0,0,0])
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
     theta_desire_list.append(theta_desired)
-    ## 第2组仅仅优化一次
-    model.set_initial_value()
-    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=1000, total_step=1000)
+
+    ## 第2组优化10次
+    model.set_initial_value([10,10,10])
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
     theta_desire_list.append(theta_desired)
-    ## 第3组对照组
-    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(1.5,2.5,0.5,1000)
+
+    ## 第3组优化10次
+    model.set_initial_value([100,100,100])
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
     theta_desire_list.append(theta_desired)
+
+    # ## 第2组仅仅优化一次
+    # model.set_initial_value()
+    # alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)
+    # alpha_list.append(alpha)
+    # delta_z_list.append(delta_z)
+    # theta_list.append(theta)
+    # theta_desire_list.append(theta_desired)
+    # # ## 第3组对照组
+    # # alpha, delta_z, theta, theta_desired = reward_model.model_simulation(1.5,2.5,0.5,1000)
+    # # alpha_list.append(alpha)
+    # # delta_z_list.append(delta_z)
+    # # theta_list.append(theta)
+    # # theta_desire_list.append(theta_desired)
+    # ## 第3组对照组
+    # alpha, delta_z, theta, theta_desired = reward_model.model_simulation(Init_K[0],Init_K[1],Init_K[2], 500)
+    # alpha_list.append(alpha)
+    # delta_z_list.append(delta_z)
+    # theta_list.append(theta)
+    # theta_desire_list.append(theta_desired)
+
 
     ## 绘图
-    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list)
+    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number=3)

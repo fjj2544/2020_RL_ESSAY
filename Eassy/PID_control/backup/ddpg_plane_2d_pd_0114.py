@@ -348,11 +348,7 @@ class RL_PI2:
                 cur_k2 = self.K[1] + delta2
                 cur_k3 = self.K[2] + delta3
                 loss = self.reward_model.get_epsolid_reward(cur_k1, cur_k2, cur_k3)
-                # if( self.current_training>1 and  loss > self.loss_after_training[self.current_training-1] ):
-                #    delta1 = delta2 = delta3 = 0.0
-                #    cur_k1 = self.K[0] + delta1
-                #    cur_k2 = self.K[1] + delta2
-                #    cur_k3 = self.K[2] + delta3
+
 
                 self.k_delta[0, j] = delta1
                 self.k_delta[1, j] = delta2
@@ -361,13 +357,6 @@ class RL_PI2:
                 self.K_roll[1, j] = cur_k2
                 self.K_roll[2, j] = cur_k3
                 self.loss[j] = loss
-                # 为啥这里要防止同样的回报
-                # 不会学习更差的
-                # if self.current_training > 1:
-                #     if(self.loss[j] >= self.loss_after_training[self.current_training-1]):
-                #         self.k_delta[0, j] = 0
-                #         self.k_delta[1, j] = 0
-                #         self.k_delta[2, j] = 0
                 self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
 
             self.K_record[:, :, self.current_training] = self.K_roll
@@ -389,12 +378,7 @@ class RL_PI2:
             self.K_after_training[:, self.current_training] = self.K[:, 0]
             self.loss_after_training[self.current_training] = self.reward_model.get_epsolid_reward(self.K[0], self.K[1],
                                                                            self.K[2])
-            print(i,self.K)
-            plt.plot(self.K_after_training[:][0],label="Kp")
-            plt.plot(self.K_after_training[:][1],label="Ki")
-            plt.plot(self.K_after_training[:][2],label="Kd")
-            plt.legend(loc="best")
-            plt.show()
+            print(i)
         plt.plot(self.loss_after_training)
         plt.show()
         plt.plot(self.K)

@@ -537,6 +537,13 @@ class RL_PI2:
                 theta_list.append(item)
             for(item) in theta_desired:
                 theta_desired_list.append(item)
+            if iterator % 2==0:
+                plt.figure(2)
+                plt.plot(theta_list, 'b+', label="time-theta")
+                plt.plot(theta_desired_list, 'r', label="time-desired_theta")
+                plt.legend(loc="best")
+                plt.title("Rolling optimization graph After %d Opt" % iterator)
+                plt.show()
         plt.figure(2)
         plt.plot(theta_list, 'b+', label="time-theta")
         plt.plot(theta_desired_list, 'r', label="time-desired_theta")
@@ -638,18 +645,16 @@ if __name__ == "__main__":
     theta_list = []
     theta_desire_list =[]
 
-
-
     ## 第1组优化10次
     model.set_initial_value()
-    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=20, total_step=1000)
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=10, total_step=500)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
     theta_desire_list.append(theta_desired)
     ## 第2组仅仅优化一次
     model.set_initial_value()
-    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=1000, total_step=1000)
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
@@ -661,7 +666,7 @@ if __name__ == "__main__":
     # theta_list.append(theta)
     # theta_desire_list.append(theta_desired)
     ## 第3组对照组
-    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(10, 10, 10, 1000)
+    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(10, 10, 10, 500)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
