@@ -210,7 +210,11 @@ class PID_model():
                 count += 1
             else:
                 count = 0
-            # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优
+            # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优解
+
+            ## 虽然我觉得这里应该加入极大值限制,这里是不是应该改环境
+            if self.env.state[0] < self.env.alpha_threshold_min or self.env.state[0] > self.env.alpha_threshold_max:
+                count += 1
 
         # 超调量 kp
         Overshoot = max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
@@ -458,20 +462,24 @@ class RL_PI2:
             self.K_roll[2, j] = res.get()[5]
             self.loss[j] = res.get()[6]
             self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
-
     """ -----------------------------------------------------------策略改善------------------------------------------------------------"""
     def policy_improve(self):
         exponential_value_loss = np.zeros((roll_outs, 1), dtype=np.float64)  #
         probability_weighting = np.zeros((roll_outs, 1), dtype=np.float64)  # probability weighting of each roll
-        # 果然这里要做一个max min 标准化
-        for i2 in range(roll_outs):
-            exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (self.loss[i2] - self.loss.min())
-                                                / (self.loss.max() - self.loss.min()))
-        for i2 in range(roll_outs):
-            probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
-
+        if (self.loss.max() - self.loss.min()) <= 1e-5:
+            for i2 in range(roll_outs):
+                probability_weighting[i2] = 1/roll_outs
+        else:
+            # 果然这里要做一个max min 标准化
+            for i2 in range(roll_outs):
+                exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (self.loss[i2] - self.loss.min())
+                                                    / (self.loss.max() - self.loss.min()))
+            for i2 in range(roll_outs):
+                probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
         temp_k = np.dot(self.k_delta, probability_weighting)
-
+        # var = np.zeros((3,1), dtype=np.float64)
+        var = np.multiply(self.k_delta,self.k_delta)
+        self.sigma = np.dot(var,probability_weighting)
         self.K = self.K + temp_k
     def iterator_finished(self):
         flag1 = sum((self.K_after_training[:, self.current_training - 1] - self.K_after_training[:,
@@ -492,12 +500,10 @@ class RL_PI2:
             i += 1
             self.current_training = i
             # 方差衰减和可视化
-            if self.current_training % self.attenuation_step_length == 0  and self.current_training != 0:
-                self.sigma = self.sigma / self.alpha  # attenuation
-                if self.current_training %10 == 0:
-                    plt.plot(self.loss_after_training[self.current_training - 10:self.current_training])
-                    plt.title("loss between %d and %d epoch"%(self.current_training - 10,self.current_training))
-                    plt.show()
+            if self.current_training %10 == 0:
+                plt.plot(self.loss_after_training[self.current_training - 10:self.current_training])
+                plt.title("loss between %d and %d epoch"%(self.current_training - 10,self.current_training))
+                plt.show()
             # 策略迭代框架
             self.policy_evl()
             self.policy_improve()
@@ -510,8 +516,9 @@ class RL_PI2:
                 break
             """ ----------------------------------------------------------虽然可以用但是这一块有BUG------------------------------------------------------------"""
             # 输出当前训练次数
-            if(self.current_training % self.attenuation_step_length == 0 ):
-                print(self.current_training,time.time()-first_time)
+            print(self.current_training, time.time() - first_time,self.sigma)
+            # if(self.current_training % self.attenuation_step_length == 0 ):
+
         ## 总共有training_times+1 条数据
         for it in range(self.current_training,training_times+1):
             self.loss_after_training[it] = self.loss_after_training[self.current_training]
@@ -542,7 +549,7 @@ class RL_PI2:
                 K_list.append(self.K_after_training[:,i])
                 loss_list.append(self.loss_after_training[i])
             plt.plot(self.loss_after_training)
-            plt.title("1111111Time1111")
+            plt.title("FUCK11111111")
             # print("test env 2 ",self.env.state[1]) alpha, dez_list, theta, desired_theta
             iterator += 1
             cur_step = iterator * rolling_time
@@ -758,34 +765,34 @@ if __name__ == "__main__":
     maxtime =-1
     k = np.zeros((3,1),dtype=np.float64)
 
-    training_times = 10
-    model = RL_PI2(if_filter=True, attenuation_step_length=5, alpha=0.85)
-    model.set_initial_value([100, 100, 100])
-    alpha, delta_z, theta, theta_desired, k_after, loss, cur_time = model.rolling_optimization(rolling_time=20,
-                                                                                               total_step=200)
-    alpha_list.append(alpha)
-    delta_z_list.append(delta_z)
-    theta_list.append(theta)
-    theta_desire_list.append(theta_desired)
-    k_list.append(k_after)
-    loss_list.append(loss)
-    maxtime = max(maxtime, cur_time)
-    training_times = maxtime
+    # training_times = 10
+    # model = RL_PI2(if_filter=True, attenuation_step_length=5, alpha=0.85)
+    # model.set_initial_value([100, 100, 100])
+    # alpha, delta_z, theta, theta_desired, k_after, loss, cur_time = model.rolling_optimization(rolling_time=20,
+    #                                                                                            total_step=200)
+    # alpha_list.append(alpha)
+    # delta_z_list.append(delta_z)
+    # theta_list.append(theta)
+    # theta_desire_list.append(theta_desired)
+    # k_list.append(k_after)
+    # loss_list.append(loss)
+    # maxtime = max(maxtime, cur_time)
+    # training_times = maxtime
     # # ## 第1组优化10次
-    model = RL_PI2(if_filter=True,attenuation_step_length=5,alpha=0.85)
-    model.set_initial_value([100, 100, 100])
-    k[0],k[1],k[2],k_after,loss,cur_time = model.training()
-    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(k[0],k[1],k[2],200)
-    alpha_list.append(alpha)
-    delta_z_list.append(delta_z)
-    theta_list.append(theta)
-    theta_desire_list.append(theta_desired)
-    k_list.append(k_after)
-    loss_list.append(loss)
+    # model = RL_PI2(if_filter=True,attenuation_step_length=5,alpha=0.85)
+    # model.set_initial_value([100, 100, 100])
+    # k[0],k[1],k[2],k_after,loss,cur_time = model.training()
+    # alpha, delta_z, theta, theta_desired = reward_model.model_simulation(k[0],k[1],k[2],200)
+    # alpha_list.append(alpha)
+    # delta_z_list.append(delta_z)
+    # theta_list.append(theta)
+    # theta_desire_list.append(theta_desired)
+    # k_list.append(k_after)
+    # loss_list.append(loss)
     # training_times = maxtime
     # # ## 第2组优化10次
-    model = RL_PI2(if_filter=False,attenuation_step_length=5,alpha=1/0.85)
-    model.set_initial_value([100, 100, 100])
+    model = RL_PI2(if_filter=True,attenuation_step_length=5,alpha=1/0.85)
+    model.set_initial_value([100,100,100])
     k[0], k[1], k[2], k_after, loss, cur_time = model.training()
     alpha, delta_z, theta, theta_desired = reward_model.model_simulation(k[0], k[1], k[2],200)
     alpha_list.append(alpha)
@@ -810,7 +817,6 @@ if __name__ == "__main__":
     #     # loss_list.append(loss)
     #     # maxtime = max(maxtime, cur_time)
 
-
     # ## 第2组仅仅优化一次
     # model.set_initial_value()
     # alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)
@@ -831,5 +837,5 @@ if __name__ == "__main__":
     # theta_list.append(theta)
     # theta_desire_list.append(theta_desired)
     ## 绘图
-    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number=3)
-    plot_loss_k(k_list, loss_list, maxtime,figure_number=3)
+    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number=1)
+    plot_loss_k(k_list, loss_list, maxtime,figure_number=1)

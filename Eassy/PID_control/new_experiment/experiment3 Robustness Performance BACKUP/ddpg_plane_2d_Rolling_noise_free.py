@@ -29,8 +29,9 @@ A_UPDATE_STEPS = 1
 
 linewidth = 1
 fontsize = 7.5
-markersize = 2.5
-legend_font_size = 6.5
+markersize = 1
+legend_font_size=6.5
+
 
 """
 空气动力学模型
@@ -115,7 +116,7 @@ class Planes_Env:
         observation_pre = theta - self.theta_desired
         ## 非线性约束
         self.delta_z_change = np.clip(action,self.delta_z_threhold_min,self.delta_z_threhold_max) - self.last_delta_z
-        self.delta_z = np.clip(self.delta_z_change ,-self.max_delta_z_change,self.max_delta_z_change) +self.last_delta_z
+        self.delta_z = np.clip(self.delta_z_change  ,-self.max_delta_z_change ,self.max_delta_z_change) +self.last_delta_z
         self.last_delta_z = self.delta_z
 
         # 动力学方程 攻角alpha，俯仰角theta 俯仰角速度q  舵偏delta_z
@@ -210,7 +211,7 @@ class PID_model():
                 count += 1
             else:
                 count = 0
-            # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优
+            # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优解
 
         # 超调量 kp
         Overshoot = max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
@@ -542,7 +543,7 @@ class RL_PI2:
                 K_list.append(self.K_after_training[:,i])
                 loss_list.append(self.loss_after_training[i])
             plt.plot(self.loss_after_training)
-            plt.title("1111111Time1111")
+            plt.title("11111111")
             # print("test env 2 ",self.env.state[1]) alpha, dez_list, theta, desired_theta
             iterator += 1
             cur_step = iterator * rolling_time
@@ -584,7 +585,7 @@ class RL_PI2:
         plt.legend(loc='best', prop={'family': 'Times New Roman'})
         # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
         plt.title("$\mathcal{K}^{*}$ Iteration Graph", fontdict={'family': 'Times New Roman'})
-        save_figure("./photo/exp1/", "K_Rolling_interval_%d_%d_%d_%d.pdf"%(rolling_time,self.K0[0],self.K0[1],self.K0[2]))
+        save_figure("./photo/exp1_noise_free/", "K_Rolling_interval_%d_%d_%d_%d.pdf"%(rolling_time,self.K0[0],self.K0[1],self.K0[2]))
         plt.show()
         plt.figure(figsize=(2.8, 1.7), dpi=300)
 
@@ -607,10 +608,10 @@ class RL_PI2:
         # 把y轴的刻度范围设置为-5到110，同理，-5不会标出来，但是能看到一点空白
         plt.plot(self.FR_time[:iterator], label='Number of iterations', color=color[0],
                  linestyle=line_style[0], marker='^', markersize=4.5, linewidth=linewidth)
-        plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': legend_font_size})
+        plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': fontsize})
         # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
         # plt.title("$\mathcal{K}^{*}$ Iteration Graph",fontdict={'family': 'Times New Roman'})
-        save_figure("./photo/exp1/",
+        save_figure("./photo/exp1_noise_free/",
                     "time.pdf" )
         plt.show()
 
@@ -643,8 +644,8 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_numb
 
     plt.legend(loc='best', prop={'family': 'Times New Roman'})
     # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
-    plt.title("$\\alpha$ Control Curve ", fontdict={'family': 'Times New Roman'})
-    save_figure("./photo/exp1/", "alpha_Curve.pdf")
+    # plt.title("$\\alpha$ Control Curve ", fontdict={'family': 'Times New Roman'})
+    save_figure("./photo/exp1_noise_free/", "alpha_Curve.pdf")
     plt.show()
 
     "绘制delta_z曲线"
@@ -657,25 +658,27 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_numb
     for i in range(figure_number):
         plt.plot(delta_z_list[i], label=label[i], color=color[i], linestyle=line_style[i])
 
-    plt.title("$\\delta_z$  Control Curve ", fontdict={'family': 'Times New Roman'})
+    # plt.title("$\\delta_z$  Control Curve ", fontdict={'family': 'Times New Roman'})
     plt.legend(loc='best', prop={'family': 'Times New Roman'})
-    save_figure("./photo/exp1/", "delta_z_Curve.pdf")
+    save_figure("./photo/exp1_noise_free/", "delta_z_Curve.pdf")
     plt.show()
     "绘制theta曲线"
-    plt.figure(num=2)
 
-    plt.xticks(fontproperties='Times New Roman')
-    plt.yticks(fontproperties='Times New Roman')
-    plt.xlabel("Time$(0.02s)$")
 
-    plt.ylabel("Pitch Angle $(Degree)$")
 
+
+    plt.figure(figsize=(2.8, 1.7), dpi=300)
+
+    plt.xticks(fontproperties='Times New Roman', fontsize=fontsize)
+    plt.yticks(fontproperties='Times New Roman', fontsize=fontsize)
+    plt.xlabel("Time$(0.02s)$",fontproperties='Times New Roman', fontsize=fontsize)
+    plt.ylabel("Pitch Angle $(Degree)$",fontproperties='Times New Roman', fontsize=fontsize)
     for i in range(figure_number):
-        plt.plot(theta_list[i], label=label[i], color=color[i], linestyle=line_style[i])
+        plt.plot(theta_list[i], label=label[i], color=color[i], linestyle=line_style[i],linewidth=linewidth)
     plt.plot(theta_desire_list[0], label="$\\theta_{target}$", linestyle="--")
-    plt.legend(loc='best', prop={'family': 'Times New Roman'})
-    plt.title("$ \\theta$  Control Curve With Filter PI2", fontdict={'family': 'Times New Roman'})
-    save_figure("./photo/exp1/", "theta_Curve.pdf")
+    plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': fontsize})
+    # plt.title("$ \\theta$  Control Curve With Filter PI2", fontdict={'family': 'Times New Roman'})
+    save_figure("./photo/exp1_noise_free/", "theta_Curve.pdf")
     plt.show()
 def plot_loss_k(K_after_training_list ,loss_after_training_list,train_time,figure_number = 3):
 
@@ -696,7 +699,7 @@ def plot_loss_k(K_after_training_list ,loss_after_training_list,train_time,figur
     # plt.legend(loc='best', prop={'family': 'Times New Roman'})
     # # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
     # plt.title("$K_p$ Iteration Graph", fontdict={'family': 'Times New Roman'})
-    # save_figure("./photo/exp1/", "Kp_curve.pdf")
+    # save_figure("./photo/exp1_noise_free/", "Kp_curve.pdf")
     # plt.show()
     # "绘制Kd曲线"
     # plt.xticks(fontproperties='Times New Roman')
@@ -710,7 +713,7 @@ def plot_loss_k(K_after_training_list ,loss_after_training_list,train_time,figur
     # # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
     # plt.title("$K_d$ Iteration Graph", fontdict={'family': 'Times New Roman'})
     #
-    # save_figure("./photo/exp1/", "Kd_curve.pdf")
+    # save_figure("./photo/exp1_noise_free/", "Kd_curve.pdf")
     # plt.show()
     # "绘制Ki曲线"
     # plt.xticks(fontproperties='Times New Roman')
@@ -723,7 +726,7 @@ def plot_loss_k(K_after_training_list ,loss_after_training_list,train_time,figur
     # plt.legend(loc='best', prop={'family': 'Times New Roman'})
     # # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
     # plt.title("$K_i$ Iteration Graph", fontdict={'family': 'Times New Roman'})
-    # save_figure("./photo/exp1/", "Ki_curve.pdf")
+    # save_figure("./photo/exp1_noise_free/", "Ki_curve.pdf")
     # plt.show()
 
 
@@ -741,7 +744,7 @@ def plot_loss_k(K_after_training_list ,loss_after_training_list,train_time,figur
                      linestyle=line_style[i], marker=marker[i],markersize=markersize,linewidth=linewidth)
     plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': legend_font_size})
     # plt.title("Loss Function Curve With Natural PI2", fontdict={'family': 'Times New Roman'})
-    save_figure("./photo/exp1/", "loss.pdf")
+    save_figure("./photo/exp1_noise_free/", "loss.pdf")
     plt.show()
 if __name__ == "__main__":
     ## 老师的路径积分
@@ -761,7 +764,7 @@ if __name__ == "__main__":
     training_times = 10
     model = RL_PI2(if_filter=True, attenuation_step_length=5, alpha=0.85)
     model.set_initial_value([100, 100, 100])
-    alpha, delta_z, theta, theta_desired, k_after, loss, cur_time = model.rolling_optimization(rolling_time=20,
+    alpha, delta_z, theta, theta_desired, k_after, loss, cur_time = model.rolling_optimization(rolling_time=10,
                                                                                                total_step=200)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
@@ -809,8 +812,6 @@ if __name__ == "__main__":
     #     # k_list.append(k_after)
     #     # loss_list.append(loss)
     #     # maxtime = max(maxtime, cur_time)
-
-
     # ## 第2组仅仅优化一次
     # model.set_initial_value()
     # alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=500, total_step=500)

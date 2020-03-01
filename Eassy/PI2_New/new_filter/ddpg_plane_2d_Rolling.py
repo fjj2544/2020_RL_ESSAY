@@ -4,7 +4,6 @@
 2. 然后我会设计PI2的优化
 3. 封装好前面的内容
 """
-
 import pygame
 import numpy as np
 import tensorflow as tf
@@ -20,8 +19,6 @@ import numba
 from numba import jit
 import copy
 
-
-
 Init_K = [1000,1000,1000]
 RENDER = False
 C_UPDATE_STEPS = 10
@@ -29,7 +26,7 @@ A_UPDATE_STEPS = 1
 
 linewidth = 1
 fontsize = 7.5
-markersize = 2.5
+markersize = 0.5
 legend_font_size = 6.5
 
 """
@@ -144,14 +141,12 @@ class Planes_Env:
         self.observation = np.array([observation_pre, observation_cur])
         return self.observation, self.reward, done
 
-
 ''' 要有行之有效的方法,能够解决一类自动整定问题 随机设置一个初始点都能收敛到一个较好的点  '''
 ## 目标量,采用动态目标
 Overshoot_target = 1e-3
 ts_target = 150
 Waveform_oscillation_bound = 1
 Static_error_bound = 0.01
-
 # TODO:计算调整时间
 ## 调整时间的计算范围,连续K次测试,保证K次测试内能通过
 adjust_bound = 0.02
@@ -161,7 +156,6 @@ belief_times = 50
 class PID_model():
     def __init__(self):
         self.env = Planes_Env()
-
     def get_epsolid_reward(self,env, k1=1.5, k2=2.5, k3=0.5,is_test = False):
         total_step = 2000
         self.env = copy.copy(env)
@@ -210,8 +204,10 @@ class PID_model():
                 count += 1
             else:
                 count = 0
-            # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优
-
+            # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优解
+            ## 虽然我觉得这里应该加入极大值限制,这里是不是应该改环境
+            if self.env.state[0] < self.env.alpha_threshold_min or self.env.state[0] > self.env.alpha_threshold_max:
+                count += 1
         # 超调量 kp
         Overshoot = max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
         Overshoot = 0 if Overshoot < Overshoot_target else (Overshoot - Overshoot_target) / Overshoot_target
@@ -221,8 +217,6 @@ class PID_model():
         return r
 
     def get_new_env(self, env,step_time ,k1=1.5, k2=2.5, k3=0.5):
-
-
         self.env = copy.copy(env)
         # print("before we come ",self.env.state[1],env.state[1])
         alpha = []
@@ -240,7 +234,6 @@ class PID_model():
         while True:
             if i == step_time:
                 break
-
             error = self.env.theta_desired - self.env.state[1]
             derror = -self.env.state[2]
             error_list.append(error)
@@ -302,8 +295,6 @@ class PID_model():
 
             i = i + 1
         return alpha, dez_list, theta, desired_theta
-
-
 """ -----------------------------------------------------------随机初始化参数-------------------------------------------------------------"""
 Ki_Min = 0
 Ki_Max = 100.0
@@ -311,7 +302,6 @@ Kp_Min = 0
 Kp_Max = 100.0
 Kd_Min = 0
 Kd_Max = 100.0
-
 """ -----------------------------------------------------------归一化部分-------------------------------------------------------------"""
 """Z-score normaliaztion"""
 """这种方法要求原始数据的分布可以近似为高斯分布，否则效果会很差。标准化公式如下 """
@@ -322,7 +312,6 @@ def ZscoreNormalization(x):
 def MaxMinNormalization(x):
     x = (x - np.min(x)) / (np.max(x) - np.min(x))
     return x
-
 
 """ -----------------------------------------------------------强化学习部分-------------------------------------------------------------"""
 # 训练次数,也就是策略迭代次数
@@ -335,10 +324,9 @@ class RL_PI2:
     def __init__(self,if_filter=True,attenuation_step_length=10,alpha=0.85):
         ## 滚动优化,用于记录当前阶段
         self.env = Planes_Env()
-
-        # 记录每次策略迭代之后的K(包括初始化）   动态变量 每一次策略迭代刷新一次
+        # 记录每次策略迭代之后的K(包括初始化) 动态变量 每一次策略迭代刷新一次
         self.K = np.zeros((3, 1), dtype=np.float64)
-        # 记录每 roll_outs 局势内的 K  动态变量 每一次策略迭代刷新一次
+        # 记录每 roll_outs 局势内的 K 动态变量 每一次策略迭代刷新一次
         self.K_roll = np.zeros((3, roll_outs), dtype=np.float64)
         # 记录策略迭代中全部的K     静态变量 每次运行才会刷新一次
         self.K_record = np.zeros((3, roll_outs, training_times), dtype=np.float64)
@@ -354,7 +342,6 @@ class RL_PI2:
         self.loss_after_training = np.zeros((training_times+Max_Adjust_times, 1), dtype=np.float64)
         # 每次策略迭代之后的K  动态变量 每一次策略迭代刷新一次
         self.K_after_training = np.zeros((3, training_times+Max_Adjust_times), dtype=np.float64)
-
         # 每次滚动优化的K
         self.K_after_roll_step = np.zeros((3,2000),dtype=np.float64)
         """ -----------------------------------------------------------定义算法超参数-------------------------------------------------------------"""
@@ -380,7 +367,8 @@ class RL_PI2:
         self.save_photo = True
         ## 是否filter
         self.if_filter = if_filter
-
+        ## 记录最优loss
+        self.cur_opt_loss = 0
         ##记录更新的初值
         self.K0 = np.zeros((3, 1), dtype=np.float64)
         ## 记录每次优化时间
@@ -388,7 +376,6 @@ class RL_PI2:
     def data_record(self):
         np.savetxt('./data/loss_after_training.txt',self.loss_after_training)
         np.savetxt('./data/K_after_training.txt',self.K_after_training)
-
     # 理论上来看学习优化降低了方差
     def sample_using_PI2(self):  # using PI2 to sample
         time_start = time.time()
@@ -425,7 +412,6 @@ class RL_PI2:
         self.current_training = 0
         # 初始化滚动环境
         self.env.reset()
-
     """ -----------------------------------------------------------计算轨迹回报,用于并行------------------------------------------------------------"""
     @jit(forceobj=True,nopython=True,nogil=True)
     def cal_trajectory_loss(self, j):
@@ -438,11 +424,11 @@ class RL_PI2:
         cur_k3 = self.K[2] + delta3
         loss = self.reward_model.get_epsolid_reward(self.env,cur_k1, cur_k2, cur_k3)
         # ##如果没有优势,那么我们就可以不去学习,没有必要浪费时间去学习没有用的东西
-        if self.if_filter and (self.current_training > 1 and loss > self.loss_after_training[self.current_training - 1]):
-            delta1 = delta2 = delta3 = 0.0
-            cur_k1 = self.K[0] + delta1
-            cur_k2 = self.K[1] + delta2
-            cur_k3 = self.K[2] + delta3
+        # if self.if_filter and  loss > self.cur_opt_loss:
+        #     delta1 = delta2 = delta3 = 0.0
+        #     cur_k1 = self.K[0] + delta1
+        #     cur_k2 = self.K[1] + delta2
+        #     cur_k3 = self.K[2] + delta3
         return delta1,delta2,delta3,cur_k1,cur_k2,cur_k3,loss
     """ -----------------------------------------------------------策略评估------------------------------------------------------------"""
     @jit(forceobj=True, nopython=True, nogil=True,parallel=True)
@@ -457,21 +443,40 @@ class RL_PI2:
             self.K_roll[1, j] = res.get()[4]
             self.K_roll[2, j] = res.get()[5]
             self.loss[j] = res.get()[6]
-            self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
-
+            # self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
     """ -----------------------------------------------------------策略改善------------------------------------------------------------"""
     def policy_improve(self):
         exponential_value_loss = np.zeros((roll_outs, 1), dtype=np.float64)  #
         probability_weighting = np.zeros((roll_outs, 1), dtype=np.float64)  # probability weighting of each roll
-        # 果然这里要做一个max min 标准化
+        minn = np.inf
+        maxx = -np.inf
+        var =  np.zeros((3, 1), dtype=np.float64)  #
         for i2 in range(roll_outs):
-            exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (self.loss[i2] - self.loss.min())
-                                                / (self.loss.max() - self.loss.min()))
-        for i2 in range(roll_outs):
-            probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
-
+            if self.loss[i2] > self.cur_opt_loss and self.if_filter:
+                continue
+            else:
+                minn = min(minn,self.loss[i2])
+                maxx = max(maxx,self.loss[i2])
+        if maxx == -np.inf or minn == np.inf or maxx -minn <=1e-6:
+            for i2 in range(roll_outs):
+                probability_weighting[i2] = 1.0 / roll_outs
+        else:
+            # 果然这里要做一个max min 标准化
+            for i2 in range(roll_outs):
+                if self.loss[i2] > self.cur_opt_loss and self.if_filter:
+                    exponential_value_loss[i2] = 0.0
+                    print("FUCK!!!!!")
+                else:
+                    exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (self.loss[i2] - minn)
+                                                    / (maxx-minn))
+            for i2 in range(roll_outs):
+                probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
+                for it in range(3):
+                    var[it] = var[it] + self.k_delta[it, i2] ** 2 * probability_weighting[i2]
+        # print(probability_weighting)
         temp_k = np.dot(self.k_delta, probability_weighting)
-
+        print(var)
+        # self.sigma = var
         self.K = self.K + temp_k
     def iterator_finished(self):
         flag1 = sum((self.K_after_training[:, self.current_training - 1] - self.K_after_training[:,
@@ -493,11 +498,13 @@ class RL_PI2:
             self.current_training = i
             # 方差衰减和可视化
             if self.current_training % self.attenuation_step_length == 0  and self.current_training != 0:
-                self.sigma = self.sigma / self.alpha  # attenuation
+                # self.sigma = self.sigma / self.alpha  # attenuation
                 if self.current_training %10 == 0:
                     plt.plot(self.loss_after_training[self.current_training - 10:self.current_training])
                     plt.title("loss between %d and %d epoch"%(self.current_training - 10,self.current_training))
                     plt.show()
+            self.cur_opt_loss = self.reward_model.get_epsolid_reward(self.env,self.K[0], self.K[1],
+                                                                           self.K[2])
             # 策略迭代框架
             self.policy_evl()
             self.policy_improve()
@@ -506,6 +513,7 @@ class RL_PI2:
 
             self.loss_after_training[self.current_training] = self.reward_model.get_epsolid_reward(self.env,self.K[0], self.K[1],
                                                                            self.K[2])
+
             if self.iterator_finished():
                 break
             """ ----------------------------------------------------------虽然可以用但是这一块有BUG------------------------------------------------------------"""
@@ -542,7 +550,7 @@ class RL_PI2:
                 K_list.append(self.K_after_training[:,i])
                 loss_list.append(self.loss_after_training[i])
             plt.plot(self.loss_after_training)
-            plt.title("1111111Time1111")
+            plt.title("FUCK11111111")
             # print("test env 2 ",self.env.state[1]) alpha, dez_list, theta, desired_theta
             iterator += 1
             cur_step = iterator * rolling_time
@@ -725,10 +733,6 @@ def plot_loss_k(K_after_training_list ,loss_after_training_list,train_time,figur
     # plt.title("$K_i$ Iteration Graph", fontdict={'family': 'Times New Roman'})
     # save_figure("./photo/exp1/", "Ki_curve.pdf")
     # plt.show()
-
-
-
-
 
     "绘制LOSS曲线"
     plt.figure(figsize=(2.8, 1.7), dpi=300)

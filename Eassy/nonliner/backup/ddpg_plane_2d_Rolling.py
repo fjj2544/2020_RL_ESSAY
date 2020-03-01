@@ -3,7 +3,7 @@
 一级标题 ----------
 二级标题 单行形式
 三级标题 上下形式
-基本注释 #形式
+基本注释 # 形式
 '''
 """
 实验一 模型仿真
@@ -25,8 +25,8 @@ import numba
 from numba import jit
 import copy
 '''全局参数定义'''
-linewidth = 1 #绘图中曲线宽度
-fontsize = 5 #绘图字体大小
+linewidth = 1 # 绘图中曲线宽度
+fontsize = 5 # 绘图字体大小
 markersize = 2.5  # 标志中字体大小
 legend_font_size = 5 #图例中字体大小
 '''辅助函数定义'''
@@ -98,7 +98,7 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_numb
     plt.xticks(fontproperties='Times New Roman', fontsize=fontsize)
     plt.yticks(fontproperties='Times New Roman', fontsize=fontsize)
     plt.xlabel("Time$(0.02s)$",fontproperties='Times New Roman',fontsize=fontsize)
-    plt.ylabel("Pitch Angle $(Degree)$",fontproperties='Times New Roman',fontsize=fontsize)
+    plt.ylabel("theta Angle $(Degree)$",fontproperties='Times New Roman',fontsize=fontsize)
     for i in range(figure_number):
         plt.plot(theta_list[i], label=label[i], color=color[i], linestyle=line_style[i],linewidth=linewidth)
     plt.plot(theta_desire_list[0], label="$\\theta_{target}$", linestyle="--",linewidth=linewidth)
@@ -106,77 +106,206 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_numb
     save_figure("./photo/exp1/", "theta_Curve.pdf")
     plt.show()
 '''------------------------------------------------------------------------------动力学模型板块--------------------------'''
-''' 飞行器动力学线性模型 '''
+# 高超声速飞行器定点飞行，高度33.5km，速度15Ma
+# alpha 飞机迎角
+# theta 飞机俯仰角
+# q 飞机俯仰角速度
+# delta_z 飞机俯仰舵偏角
+# b_alpha = 0.073
+# b_deltaz = -0.0035
+# a_alpha = 0.7346
+# a_deltaz = -2.8375
+# a_q = 3.9779
+# dq = -a_alpha*alpha - a_q*q - a_delta_z*delta_z
+# dtheta = q
+# dalpha = q - b_alpha*alpha -b_delta_z*delta_z
+#定义环境
 class Planes_Env:
     def __init__(self):
+        # self.actions = [0,1]
         self.observation_dim = 2
-        self.state = np.array([0.0, 0.0, 0.0]) # 状态量分别为[飞机迎角 alpha, 飞机俯仰角theta, 飞机俯仰角速度q]
+        # 一阶变量
+        self.altitude = 33500.0
+        self.Mach = 15.0
+        self.theta = 0.0
+        self.pitch = 0.0 / 57.3
+        self.rrange = 0.0
+        self.mass = 83191
+        self.omega_z = 0.0
+        # 速度
+        self.daltitude = 0.0
+        self.dMach = 0.0
+        self.dtheta = 0.0
+        self.dpitch = 0.0
+        self.drrange = 0.0
+        self.dmass = 0.0
+        self.domega_z = 0.0
+        # 攻角
+        self.arfa = 0.0 / 57.3
+        # 目标
+        self.pitch_desired = 10 / 57.3
+        self.dpithch_desired = 0.0
+        #其他常量
+        self.Vs = 305.58
+        self.Lr =24.38
+        self.G0 =9.81
+        self.Sr = 334.73
+        self.Jz = 8288700
+        self.Re = 6371000
+        #状态量分别为[飞机迎角 alpha, 飞机俯仰角theta, 飞机俯仰角速度q]
+        # self.state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.observation = np.array([0.0, 0.0])
+        self.state = np.array([0.0,0.0])
         self.steps_beyond_done = 0
-        self.max_steps = 200
+        self.max_steps = 400
         self.viewer = None
-        '''飞行器参数'''
-        self.b_alpha = 0.073
-        self.b_delta_z = -0.0035
-        self.a_alpha = 0.7346
-        self.a_delta_z = -2.8375
-        self.a_q = 3.9779
-        self.delta_z_mag = 0.1
-        self.tau = 0.02
-        self.theta_desired = 10
-        '''角度阈值 攻角alpha[-1,10];舵偏delta_z[-20,20]'''
+        #角度阈值 攻角alpha[-1,10];舵偏delta_z[-20,20]
         self.alpha_threshold_max = 10
         self.alpha_threshold_min = -1
         self.delta_z_threhold_max = 20
         self.delta_z_threhold_min = -20
         self.reward = 0.0
         self.cost = 0.0
-        self.delta_z = 0.0
-        self.max_delta_z_change = 1 # 最大加速度,dez最大变化量
-        self.delta_z_change = 0     # delta_z改变量
-        self.last_delta_z = 0.0     # 记录上一个delta_z
+        self.tau = 0.005
     def reset(self):
-        n = np.random.randint(1, 1000, 1)
+        n = np.random.randint(1,1000,1)
         np.random.seed(n)
-        self.state = np.random.uniform(-0.5, 0.5, size=(3,))
+        # self.state = np.random.uniform(-0.5,0.5 ,size=(7,) )
+        # self.state = np.array([0.0,0.0,0.0])
         self.observation = np.array([0.0, 0.0])
+        #一阶变量
+        self.altitude = 33500.0
+        self.Mach = 15.0
+        self.theta = 0.0
+        self.pitch = 0.0 / 57.3
+        self.rrange = 0.0
+        self.mass = 83191
+        self.omega_z = 0.0
+        #速度
+        self.daltitude = 0.0
+        self.dMach = 0.0
+        self.dtheta = 0.0
+        self.dpitch = 0.0
+        self.drrange = 0.0
+        self.dmass = 0.0
+        self.domega_z = 0.0
+        #攻角
+        self.arfa = 0.0 / 57.3
+        #目标
+        self.pitch_desired = 5 / 57.3
+        self.dpithch_desired = 0.0
+        self.theta_desired = 0.0
+        self.dtheta_desired = 0.0
+        # self.state = np.array([0.0, 5.0, 0.0])
         self.steps_beyond_done = 0
+        # print(self.state)
         return self.observation
-
-    def step(self, action):
+    def step(self,action):
+        # print("action", action)
         action = action[0]
-        state = self.state
-        alpha, theta, q = state
-        observation_pre = theta - self.theta_desired
-        '''非线性约束'''
-        self.delta_z_change = np.clip(action,self.delta_z_threhold_min,self.delta_z_threhold_max) - self.last_delta_z
-        self.delta_z = np.clip(self.delta_z_change ,-self.max_delta_z_change,self.max_delta_z_change) +self.last_delta_z
-        self.last_delta_z = self.delta_z
-        '''动力学方程 攻角alpha，俯仰角theta 俯仰角速度q  舵偏delta_z'''
-        alpha_dot = q - self.b_alpha * alpha - self.b_delta_z * self.delta_z
-        theta_dot = q
-        q_dot = -self.a_alpha * alpha - self.a_q * q - self.a_delta_z * self.delta_z
-        q = q + self.tau * q_dot ##积分得到状态量
-        theta = theta + self.tau * theta_dot
-        observation_cur = theta - self.theta_desired
-        alpha = np.clip(alpha + self.tau * alpha_dot  ,self.alpha_threshold_min,self.alpha_threshold_max)
-        self.steps_beyond_done += 1
-        self.state = np.array([alpha, theta, q])
-        lose = alpha < self.alpha_threshold_min or alpha > self.alpha_threshold_max # 根据更新的状态判断是否结束
-        if not lose:
-            self.reward = -((theta - self.theta_desired) ** 2 + 0.1 * q ** 2 + 0.01 * action ** 2)
-        else:
-            self.reward = -2500
-        done = lose or self.steps_beyond_done > self.max_steps
-        self.observation = np.array([observation_pre, observation_cur])
-        return self.observation, self.reward, done
+        Alpha_deg = self.arfa*57.3
+        # state = self.state
+        Rho = np.exp(-2.114 * 10.0 ** (-14.0) * self.altitude ** 3.0 + 3.656 * 10.0 ** (
+            -9.0) * self.altitude ** 2.0 - 3.309 * 10.0 ** (-4.0) * self.altitude + 3.217)
+        Qdyn = 0.5 * Rho * self.Mach * self.Vs * self.Mach * self.Vs
+        # ***************************** 高超声速 	升力系数 ********************
+        CL0 = -8.19 * 10.0 ** (-2) + 4.70 * 10.0 ** (-2) * self.Mach + 1.86 * 10.0 ** (-2) * Alpha_deg \
+              - 4.73 * 10.0 ** (-4) * (Alpha_deg * self.Mach) - 9.19 * 10.0 ** (-3) * self.Mach ** 2 - 1.52 * 10.0 ** (
+                  -4) * Alpha_deg ** 2 \
+              + 7.74 * 10.0 ** (-4) * self.Mach ** 3 + 5.99 * 10.0 ** (-7) * (Alpha_deg * self.Mach) ** 2 \
+              + 4.08 * 10.0 ** (-6) * Alpha_deg ** 3 - 2.93 * 10.0 ** (-5) * self.Mach ** 4 - 3.91 * 10.0 ** (
+                  -7) * Alpha_deg ** 4 \
+              + 4.12 * 10.0 ** (-7) * self.Mach ** 5 + 1.30 * 10.0 ** (-8) * Alpha_deg ** 5
+        CL_e = -1.45 * 10.0 ** (-5) + 1.01 * 10.0 ** (-4) * Alpha_deg + 7.10 * 10.0 ** (-6) * self.Mach \
+               - 4.14 * 10.0 ** (-4) * action - 3.51 * 10.0 ** (
+                   -6) * Alpha_deg * action + 8.72 * 10.0 ** (-6) * self.Mach * action \
+               + 1.70 * 10.0 ** (-7) * self.Mach * Alpha_deg * action
+        CL_a = CL_e
+        # ***************************** 高超声速 阻力系数 ********************
+        CD0 = 8.717 * 10.0 ** (-2) - 3.307 * 10.0 ** (-2) * self.Mach + 3.179 * 10.0 ** (-3) * Alpha_deg \
+              - 1.250 * 10.0 ** (-4) * (Alpha_deg * self.Mach) + 5.036 * 10.0 ** (-3) * self.Mach ** 2 \
+              - 1.100 * 10.0 ** (-3) * Alpha_deg ** 2 + 1.405 * 10.0 ** (-7) * (Alpha_deg * self.Mach) ** 2 \
+              - 3.658 * 10.0 ** (-4) * self.Mach ** 3 + 3.175 * 10.0 ** (-4) * Alpha_deg ** 3 + 1.274 * 10.0 ** (
+                  -5) * self.Mach ** 4 \
+              - 2.985 * 10.0 ** (-5) * Alpha_deg ** 4 - 1.705 * 10.0 ** (-7) * self.Mach ** 5 + 9.766 * 10.0 ** (
+                  -7) * Alpha_deg ** 5
+        CD_e = 4.5548 * 10.0 ** (-4) + 2.5411 * 10.0 ** (-5) * Alpha_deg - 1.1436 * 10.0 ** (-4) * self.Mach \
+               + 3.2187 * 10.0 ** (-6) * Alpha_deg ** 2 + 3.014 * 10.0 ** (-6) * self.Mach ** 2 \
+               - 3.6417 * 10.0 ** (-5) * action - 5.3015 * 10.0 ** (-7) * self.Mach * Alpha_deg * action \
+               + 6.9629 * 10.0 ** (-6) * action ** 2 + 2.1026 * 10.0 ** (-12) * (
+                       self.Mach * Alpha_deg * action) ** 2
+        CD_a = CD_e
+        CD_r = 7.50 * 10.0 ** (-4) - 2.29 * 10.0 ** (-5) * Alpha_deg - 9.69 * 10.0 ** (-5) * self.Mach + 8.76 * 10.0 ** (
+            -7) * Alpha_deg ** 2 + 2.70 * 10.0 ** (-6) * self.Mach ** 2
+        CD = CD0 + CD_e + CD_a + CD_r
+        CL = CL0 + CL_e + CL_a
+        # ***************************** 高超声速 俯仰力矩 ********************
+        mz0 = -2.192 * 10.0 ** (-2) + 7.739 * 10.0 ** (-3) * self.Mach - 2.260 * 10.0 ** (-3) * Alpha_deg \
+              + 1.808 * 10.0 ** (-4) * (Alpha_deg * self.Mach) - 8.849 * 10.0 ** (-4) * self.Mach ** 2 \
+              + 2.616 * 10.0 ** (-4) * Alpha_deg ** 2 - 2.880 * 10.0 ** (-7) * (Alpha_deg * self.Mach) ** 2 \
+              + 4.617 * 10.0 ** (-5) * self.Mach ** 3 - 7.887 * 10.0 ** (-5) * Alpha_deg ** 3 - 1.143 * 10.0 ** (
+                  -6) * self.Mach ** 4 \
+              + 8.288 * 10.0 ** (-6) * Alpha_deg ** 4 + 1.082 * 10.0 ** (-8) * self.Mach ** 5 - 2.789 * 10.0 ** (
+                  -7) * Alpha_deg ** 5
+        mz_e = -5.67 * 10.0 ** (-5) - 1.51 * 10.0 ** (-6) * self.Mach - 6.59 * 10.0 ** (
+            -5) * Alpha_deg + 2.89 * 10.0 ** (-4) * action \
+               + 4.48 * 10.0 ** (-6) * Alpha_deg * action - 4.46 * 10.0 ** (
+                   -6) * self.Mach * Alpha_deg - 5.87 * 10.0 ** (-6) * self.Mach * action \
+               + 9.72 * 10.0 ** (-8) * self.Mach * Alpha_deg * action
+        mz_a = mz_e
+        mz_r = -2.79 * 10.0 ** (-5) * Alpha_deg - 5.89 * 10.0 ** (-8) * Alpha_deg ** 2 + 1.58 * 10.0 ** (-3) * self.Mach ** 2 \
+               + 6.42 * 10.0 ** (-8) * Alpha_deg ** 3 - 6.69 * 10.0 ** (-4) * self.Mach ** 3 \
+               - 2.10 * 10.0 ** (-8) * Alpha_deg ** 4 + 1.05 * 10.0 ** (-4) * self.Mach ** 4 \
+               + 3.14 * 10.0 ** (-9) * Alpha_deg ** 5 - 7.74 * 10.0 ** (-6) * self.Mach ** 5 \
+               - 2.18 * 10.0 ** (-10) * Alpha_deg ** 6 + 2.70 * 10.0 ** (-7) * self.Mach ** 6 \
+               + 5.74 * 10.0 ** (-12) * Alpha_deg ** 7 - 3.58 * 10.0 ** (-9) * self.Mach ** 7
+        mzz = -1.36 + 0.386 * self.Mach + 7.85 * 10.0 ** (-4) * Alpha_deg + 1.40 * 10.0 ** (-4) * Alpha_deg * self.Mach \
+              - 5.42 * 10.0 ** (-2) * self.Mach ** 2 + 2.36 * 10.0 ** (-3) * Alpha_deg ** 2 - 1.95 * 10.0 ** (-6) * (
+                      Alpha_deg * self.Mach) ** 2 \
+              + 3.80 * 10.0 ** (-3) * self.Mach ** 3 - 1.48 * 10.0 ** (-3) * Alpha_deg ** 3 \
+              - 1.30 * 10.0 ** (-4) * self.Mach ** 4 + 1.69 * 10.0 ** (-4) * Alpha_deg ** 4 \
+              + 1.71 * 10.0 ** (-6) * self.Mach ** 5 - 5.93 * 10.0 ** (-6) * Alpha_deg ** 5
+        mz = mz0 + mz_e + mz_a + mz_r + mzz * self.omega_z * self.Lr / (2 * self.Mach * self.Vs)
+        Lift = Qdyn * CL * self.Sr
+        Drag = Qdyn * CD * self.Sr
+        Mz = Qdyn * mz * self.Sr * self.Lr
+        Thrust = 1.9 * 10.0 ** 5.0
+        Isp = 4900
+        # 动力学方程
+        self.daltitude = self.Mach * self.Vs * np.sin(self.theta)
+        self.dMach = (Thrust * np.cos(self.arfa) - Drag - self.mass * self.G0 * np.sin(self.theta)) / (self.mass *self.Vs)
+        self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) + np.cos(self.theta) * (
+                    self.Mach * self.Vs / (self.Re + self.altitude) - self.G0 / (self.Mach * self.Vs))
+        self.dmass = -Thrust / (self.G0 * Isp)
+        self.drrange = self.Mach * self.Vs * np.cos(self.theta) * (self.Re / (self.Re + self.altitude))
+        self.domega_z = Mz / self.Jz
+        self.dpitch = self.omega_z
 
+        self.altitude = self.altitude + self.daltitude * self.tau
+        self.Mach = self.Mach+self.dMach * self.tau
+        self.theta = self.theta + self.dtheta * self.tau
+        self.rrange = self.rrange + self.drrange * self.tau
+        self.mass = self.mass + self.dmass * self.tau
+        self.omega_z = self.omega_z + self.domega_z * self.tau
+        self.pitch = self.pitch + self.dpitch * self.tau
+        self.arfa = self.pitch - self.theta
+        self.steps_beyond_done += 1
+        #根据更新的状态判断是否结束
+        lose =  Alpha_deg < self.alpha_threshold_min or Alpha_deg > self.alpha_threshold_max
+        #设置回报
+        if not lose :
+            self.reward =-((self.pitch*57.3-self.pitch_desired*57.3)**2+0.1*(self.dpitch*57.3-self.dpitch*57.3)**2+0.01*action**2)
+        else:
+            self.reward = -4500
+        done = lose or self.steps_beyond_done > self.max_steps
+        self.observation = np.array([self.pitch*57.3, self.dpitch*57.3])
+        return self.observation, self.reward, done
 '''------------------------------------------------------------PID控制器板块------------------------------------'''
 '''
 算法参数
 '''
 Overshoot_target = 1e-3
-ts_target = 150
+ts_target = 600
 Waveform_oscillation_bound = 1
 Static_error_bound = 0.01
 adjust_bound = 0.02
@@ -208,8 +337,8 @@ class PID_model():
             if count >= belief_times and ts == total_step:
                 ts = i
                 break
-            error = self.env.theta_desired - self.env.state[1]
-            derror = -self.env.state[2]
+            error = self.env.pitch_desired - self.env.observation[0]
+            derror = self.env.dpithch_desired-self.env.observation[1]
             error_list.append(error)
             derror_list.append(derror)
             ierror = ierror + error * self.env.tau
@@ -218,24 +347,22 @@ class PID_model():
             if (error == 0 and tp == 0):
                 tp = i
             self.env.step(np.array([action]))
-            alpha.append(self.env.state[0])
-            theta.append(self.env.state[1])
+            alpha.append(self.env.arfa)
+            theta.append(self.env.observation[0])
             desired_theta.append(self.env.theta_desired)
-            q.append(self.env.state[2])
+            q.append(self.env.observation[1])
             time.append(i)
             control.append(action)
-            if(abs(error)<=abs(adjust_bound * self.env.theta_desired)):
+            if(abs(error)<=abs(adjust_bound * self.env.pitch)):
                 count += 1
             else:
                 count = 0
-        ''' 超调量 '''
+        '''超调量'''
         Overshoot = max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
         Overshoot = 0 if Overshoot < Overshoot_target else (Overshoot - Overshoot_target) / Overshoot_target
-        ''' 调整时间 '''
+        '''调整时间'''
         ts = 0 if ts <= ts_target else (ts - ts_target) / ts_target
         r = Overshoot + ts
-        # r = Overshoot
-        # r = ts
         return r
     def get_new_env(self, env,step_time ,k1=1.5, k2=2.5, k3=0.5):
         self.env = copy.copy(env)
@@ -254,21 +381,20 @@ class PID_model():
         while True:
             if i == step_time:
                 break
-            error = self.env.theta_desired - self.env.state[1]
-            derror = -self.env.state[2]
+            error = self.env.pitch_desired- self.env.observation[0]
+            derror = self.env.dpithch_desired-self.env.observation[1]
             error_list.append(error)
             derror_list.append(derror)
             ierror = ierror + error * self.env.tau
             action = k1 * error + k2 * derror + k3 * ierror
 
             action_list.append(action)
-            dez_list.append(self.env.delta_z)
-
+            dez_list.append(action)
             self.env.step(np.array([action]))
-            alpha.append(self.env.state[0])
-            theta.append(self.env.state[1])
-            desired_theta.append(self.env.theta_desired)
-            q.append(self.env.state[2])
+            alpha.append(self.env.arfa)
+            theta.append(self.env.observation[0])
+            desired_theta.append(self.env.pitch_desired)
+            q.append(self.env.observation[1])
             time.append(i)
             control.append(action)
             i = i + 1
@@ -288,24 +414,31 @@ class PID_model():
         action_list = []
         dez_list = []
         while i < total_step:
-            error = self.env.theta_desired - self.env.state[1]
-            derror = -self.env.state[2]
+            error = self.env.pitch_desired - self.env.observation[0]
+            derror = self.env.dpithch_desired - self.env.observation[1]
             error_list.append(error)
             derror_list.append(derror)
             ierror = ierror + error * self.env.tau
             action = k1 * error + k2 * derror + k3 * ierror
-            action_list.append(action)
-            dez_list.append(self.env.delta_z)
+            dez_list.append(action)
             self.env.step(np.array([action]))
-            alpha.append(self.env.state[0])
-            theta.append(self.env.state[1])
-            desired_theta.append(self.env.theta_desired)
-            q.append(self.env.state[2])
+            alpha.append(self.env.arfa)
+            theta.append(self.env.observation[0])
+            desired_theta.append(self.env.pitch_desired)
+            q.append(self.env.observation[1])
             time.append(i)
             control.append(action)
             i = i + 1
         return alpha, dez_list, theta, desired_theta
+
 """ -----------------------------------------------------------FR-PI2板块-------------------------------------------------------------"""
+'''随机初始化参数'''
+Ki_Min = 0
+Ki_Max = 100.0
+Kp_Min = 0
+Kp_Max = 100.0
+Kd_Min = 0
+Kd_Max = 100.0
 '''归一化部分'''
 """Z-score normaliaztion"""
 """这种方法要求原始数据的分布可以近似为高斯分布，否则效果会很差。标准化公式如下 """
@@ -316,7 +449,7 @@ def ZscoreNormalization(x):
 def MaxMinNormalization(x):
     x = (x - np.min(x)) / (np.max(x) - np.min(x))
     return x
-training_times = 10  # 训练次数
+training_times = 20  # 训练次数
 roll_outs = 20  # 路径数量
 class RL_PI2:
     def __init__(self,IF_FILTER=True):
@@ -332,13 +465,14 @@ class RL_PI2:
         self.K_after_training = np.zeros((3, training_times), dtype=np.float64) # 每次策略迭代之后的K
         self.K_after_roll_step = np.zeros((3,2000),dtype=np.float64) # 每次滚动优化的K
         """ -----------------------------------------------------------定义算法超参数-------------------------------------------------------------"""
-        self.attenuation_step_length = 10 # 方差更新间隔频率
+        self.attenuation_step_length = 1 # 方差更新间隔频率
         self.alpha = 0.85 # 方差更新系数
         self.current_roll = 0 # 记录当前第条轨迹
         self.current_training = 0  # 记录当前第几次策略迭代
         self.PI2_coefficient = 30.0  # PI2超参数 lambda
         self.reward_model = PID_model()         ## 交互模型
         self.save_data = False         ## 是否记录数据
+        self.random_init = False         ## 是否随机初始化
         self.plot_photo = False         ## 是否绘图
         self.save_photo = True         ## 是否记录图片
         self.if_filter = IF_FILTER     # 是否滤波
@@ -356,10 +490,14 @@ class RL_PI2:
         if self.save_data:
             self.data_record()
     def set_initial_value(self):
-        '''初始化参数'''
-        self.K[0] = 10
-        self.K[1] = 10
-        self.K[2] = 10
+        if self.random_init:
+            self.K[0] = random.uniform(Kp_Min,Kp_Max)
+            self.K[1] = random.uniform(Kd_Min,Kd_Max)
+            self.K[2] = random.uniform(Ki_Min,Ki_Max)
+        else:
+            self.K[0] = 10
+            self.K[1] = 10
+            self.K[2] = 10
         '''初始化方差'''
         self.sigma[0] = 1.0
         self.sigma[1] = 0.3
@@ -371,7 +509,7 @@ class RL_PI2:
         self.env.reset()
     """ -----------------------------------------------------------计算轨迹回报,用于并行------------------------------------------------------------"""
     @jit(forceobj=True,nopython=True,nogil=True)
-    def get_trajectory_loss(self, j):
+    def cal_trajectory_loss(self, j):
         self.current_roll = j
         delta1 = np.random.normal(0, self.sigma[0], 1)
         delta2 = np.random.normal(0, self.sigma[1], 1)
@@ -391,7 +529,7 @@ class RL_PI2:
     @jit(forceobj=True, nopython=True, nogil=True,parallel=True)
     def policy_evl(self):
         # 采样N局,记录稀疏回报
-        multi_res = [poll.apply_async(self.get_trajectory_loss, (j,)) for j in range(roll_outs)]
+        multi_res = [poll.apply_async(self.cal_trajectory_loss, (j,)) for j in range(roll_outs)]
         for j, res in enumerate(multi_res):
             self.k_delta[0, j] = res.get()[0]
             self.k_delta[1, j] = res.get()[1]
@@ -400,14 +538,16 @@ class RL_PI2:
             self.K_roll[1, j] = res.get()[4]
             self.K_roll[2, j] = res.get()[5]
             self.loss[j] = res.get()[6]
+            # self.loss[j] = self.loss[j] + np.random.uniform(-0.02, 0.02, 1)
     """ -----------------------------------------------------------策略改善------------------------------------------------------------"""
     def policy_improve(self):
         exponential_value_loss = np.zeros((roll_outs, 1), dtype=np.float64)  #
         probability_weighting = np.zeros((roll_outs, 1), dtype=np.float64)  # probability weighting of each roll
-        if math.fabs(self.loss.max() -self.loss.min()) <= 1e-6: # avoid same loss vector 
+        if math.fabs(self.loss.max() -self.loss.min()) <= 1e-6:
             for i2 in range(roll_outs):
                 probability_weighting[i2] = 1 / roll_outs
         else:
+            # 果然这里要做一个max min 标准化
             for i2 in range(roll_outs):
                 exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (self.loss[i2] - self.loss.min())
                                                     / (self.loss.max() - self.loss.min()))
@@ -423,42 +563,46 @@ class RL_PI2:
             return True
         else :
             return False
-    """ ----------------------------------------------------------策略迭代部分------------------------------------------------------------ """
+    """----------------------------------------------------------策略迭代部分------------------------------------------------------------"""
     def training(self):
         i =0
-        while i < training_times:
+        adjust_times = 0
+        while i < training_times+adjust_times:
             # 分阶段优化 首先调整到局部最优 然后找到带有约束的满意解
             self.current_training = i
             # 方差衰减和可视化
             if self.current_training % self.attenuation_step_length == 0  and self.current_training != 0:
                 self.sigma = self.sigma / self.alpha  # attenuation
-                if self.current_training %10 == 0:
-                    plt.plot(self.loss_after_training[self.current_training - 10:self.current_training])
-                    plt.title("loss between %d and %d epoch"%(self.current_training - 10,self.current_training))
+                if self.current_training %5 == 0:
+                    plt.plot(self.loss_after_training[self.current_training - 5:self.current_training])
+                    plt.title("loss between %d and %d epoch"%(self.current_training - 5,self.current_training))
                     plt.show()
             # 策略迭代框架
             self.policy_evl()
             self.policy_improve()
             # 记录参数
             self.K_after_training[:, self.current_training] = self.K[:, 0]
+
             self.loss_after_training[self.current_training] = self.reward_model.get_epsolid_reward(self.env,self.K[0], self.K[1],
                                                                            self.K[2])
             if self.iterator_finished():
                 break
-            # 输出当前训练花费时间
-            if(self.current_training+1 % self.attenuation_step_length == 0 ):
-                print("!!!!!!!!!!!!! TIME !!!!!!!!",self.current_training,time.time()-first_time)
+            """ ----------------------------------------------------------虽然可以用但是这一块有BUG------------------------------------------------------------"""
+            # 输出当前训练次数
+            if(self.current_training % self.attenuation_step_length == 0 ):
+                print("Time!!!!!!",self.current_training,time.time()-first_time)
             i+=1
         if self.plot_photo and self.current_training !=0:
-            plt.plot(self.K_after_training[0][:self.current_training],label="KP")
-            plt.plot(self.K_after_training[1][:self.current_training],label="KD")
-            plt.plot(self.K_after_training[2][:self.current_training],label="KI")
+            plt.plot(self.K_after_training[0][:self.current_training+adjust_times],label="KP")
+            plt.plot(self.K_after_training[1][:self.current_training+adjust_times],label="KD")
+            plt.plot(self.K_after_training[2][:self.current_training+adjust_times],label="KI")
             plt.legend(loc="best")
             plt.savefig("K.png")
             plt.show()
-            plt.plot(self.loss_after_training[:self.current_training])
+            plt.plot(self.loss_after_training[:self.current_training+adjust_times])
             plt.savefig("loss.png")
             plt.show()
+        # self.reward_model.model_simulation(self.env,self.K[0],self.K[1],self.K[2])
         return self.K[0],self.K[1],self.K[2],self.current_training+1
     def rolling_optimization(self,rolling_time=20,total_step=200):
         opt_times = int(total_step/rolling_time)
@@ -478,6 +622,7 @@ class RL_PI2:
             cur_step = iterator * rolling_time
             self.K_after_roll_step[:,iterator]=self.K[:,0]
             self.env,alpha, delta_z, theta, theta_desired = self.reward_model.get_new_env(self.env,rolling_time,self.K[0],self.K[1],self.K[2])
+
             for item in alpha:
                 alpha_list.append(item)
             for item in delta_z:
@@ -486,11 +631,12 @@ class RL_PI2:
                 theta_list.append(item)
             for(item) in theta_desired:
                 theta_desired_list.append(item)
-        plt.plot(theta_list, 'b', label="time-theta",linewidth=linewidth)
-        plt.plot(theta_desired_list, 'r', label="time-desired_theta",linewidth=linewidth)
-        plt.legend(loc="best")
-        plt.title("Rolling optimization graph After %d Opt" % iterator)
-        plt.show()
+            if iterator % 2 ==0:
+                plt.plot(theta_list, 'b', label="time-theta",linewidth=linewidth)
+                plt.plot(theta_desired_list, 'r', label="time-desired_theta",linewidth=linewidth)
+                plt.legend(loc="best")
+                plt.title("Rolling optimization graph After %d Opt" % iterator)
+                plt.show()
         label = ["Kp", "Kd", "Ki"]
         color = ["r", "g", "b", "k"]
         line_style = ["-", "--", ":", "-."]
@@ -505,6 +651,8 @@ class RL_PI2:
             plt.plot(self.K_after_roll_step[i][:iterator+1], label=label[i], color=color[i],
                      linestyle=line_style[i], marker=marker[i],linewidth=linewidth,markersize=markersize)
         plt.legend(loc='best',prop={'family': 'Times New Roman', 'size': legend_font_size})
+        # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
+        # plt.title("$\mathcal{K}^{*}$ Iteration Graph", fontdict={'family': 'Times New Roman', 'size': fontsize})
         save_figure("./photo/exp1/", "K_Rolling_interval_%d.pdf"%rolling_time)
         plt.show()
         print(total_time)
@@ -520,10 +668,9 @@ if __name__ == "__main__":
     delta_z_list = []
     theta_list = []
     theta_desire_list =[]
-
-    ## 第1组优化10次
+    # ## 第1组优化10次
     model.set_initial_value()
-    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=20, total_step=1000)
+    alpha, delta_z, theta, theta_desired = model.rolling_optimization(rolling_time=100, total_step=800)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
@@ -536,16 +683,16 @@ if __name__ == "__main__":
     # theta_list.append(theta)
     # theta_desire_list.append(theta_desired)
     # ## 第3组对照组
-    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(1.5,2.5,0.5,1000)
-    alpha_list.append(alpha)
-    delta_z_list.append(delta_z)
-    theta_list.append(theta)
-    theta_desire_list.append(theta_desired)
-    ## 第3组对照组
-    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(10, 10, 10, 1000)
+    # alpha, delta_z, theta, theta_desired = reward_model.model_simulation(1.5,2.5,0.5,3000)
+    # alpha_list.append(alpha)
+    # delta_z_list.append(delta_z)
+    # theta_list.append(theta)
+    # theta_desire_list.append(theta_desired)
+    # ## 第3组对照组
+    alpha, delta_z, theta, theta_desired = reward_model.model_simulation(10, 10, 10, 800)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)
     theta_desire_list.append(theta_desired)
     ## 绘图
-    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number=3)
+    plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number=2)

@@ -1,8 +1,7 @@
 """
-这里我初步尝试滚动优化
-1. 首先我会设计一个接口,可以模拟K步得到当前env
-2. 然后我会设计PI2的优化
-3. 封装好前面的内容
+1. 注释清晰,便于封装
+2. 封装接口清晰,便于二次开发
+3. 采用并行架构
 """
 
 import pygame
@@ -28,9 +27,9 @@ C_UPDATE_STEPS = 10
 A_UPDATE_STEPS = 1
 
 linewidth = 1
-fontsize = 5
+fontsize = 7.5
 markersize = 1
-
+legend_font_size = 6.5
 
 """
 空气动力学模型
@@ -115,7 +114,7 @@ class Planes_Env:
         observation_pre = theta - self.theta_desired
         ## 非线性约束
         self.delta_z_change = np.clip(action,self.delta_z_threhold_min,self.delta_z_threhold_max) - self.last_delta_z
-        self.delta_z = np.clip(self.delta_z_change  ,-self.max_delta_z_change + np.random.normal(0,1),self.max_delta_z_change) +self.last_delta_z
+        self.delta_z = np.clip(self.delta_z_change +np.random.normal(0,1) ,-self.max_delta_z_change ,self.max_delta_z_change) +self.last_delta_z
         self.last_delta_z = self.delta_z
 
         # 动力学方程 攻角alpha，俯仰角theta 俯仰角速度q  舵偏delta_z
@@ -211,10 +210,6 @@ class PID_model():
             else:
                 count = 0
             # ## 分阶段优化，因为每个阶段的任务应该是不同的,模拟人的思想，模拟我们自己的调参经验,先得到一个可行解，然后转移得到带有约束的最优解
-
-            ## 虽然我觉得这里应该加入极大值限制,这里是不是应该改环境
-            if self.env.state[0] < self.env.alpha_threshold_min or self.env.state[0] > self.env.alpha_threshold_max:
-                count += 1
 
         # 超调量 kp
         Overshoot = max(abs(np.array(theta))) - max(abs(np.array(desired_theta)))
@@ -546,7 +541,7 @@ class RL_PI2:
                 K_list.append(self.K_after_training[:,i])
                 loss_list.append(self.loss_after_training[i])
             plt.plot(self.loss_after_training)
-            plt.title("FUCK11111111")
+            plt.title("1111111111111")
             # print("test env 2 ",self.env.state[1]) alpha, dez_list, theta, desired_theta
             iterator += 1
             cur_step = iterator * rolling_time
@@ -679,7 +674,7 @@ def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_numb
     for i in range(figure_number):
         plt.plot(theta_list[i], label=label[i], color=color[i], linestyle=line_style[i],linewidth=linewidth)
     plt.plot(theta_desire_list[0], label="$\\theta_{target}$", linestyle="--")
-    plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': fontsize})
+    plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': legend_font_size})
     # plt.title("$ \\theta$  Control Curve With Filter PI2", fontdict={'family': 'Times New Roman'})
     save_figure("./photo/exp1/", "theta_Curve.pdf")
     plt.show()
