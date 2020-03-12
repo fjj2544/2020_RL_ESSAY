@@ -7,8 +7,7 @@ from sklearn import preprocessing
 import random
 import multiprocessing as mp
 import copy
-
-
+## 这里是混合模型
 '''------------------------------超参数模块------------------------------'''
 # 辅助模块
 linewidth = 1 # 绘图中曲线宽度
@@ -32,7 +31,7 @@ belief_times = 50               # 稳定次数
 # 强化学习
 RAND_INIT = True
 training_times = 100            # 训练次数
-roll_outs = 20                  # 并行数量
+roll_outs = 20                # 并行数量
 Max_Adjust_times = 1000         # 最大调整次数
 '''------------------------------辅助模块------------------------------'''
 
@@ -191,7 +190,7 @@ class Planes_Env:
         self.delta_z_threhold_min = -20     # 最小舵偏【度】
 
         # 时间
-        self.tau = 0.005
+        self.tau = 5e-3
 
     # 重设环境
     def reset(self):
@@ -366,8 +365,10 @@ class Planes_Env:
         # v变化[马赫/s]
         self.dMach = (Thrust * np.cos(self.arfa) - Drag - self.mass * self.G0 * np.sin(self.theta)) / (self.mass *self.Vs)
         # 飞行角速度
-        self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) + np.cos(self.theta) \
-                      * (self.Mach * self.Vs / (self.Re + self.altitude) - self.G0 / (self.Mach * self.Vs))
+        # self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) + np.cos(self.theta) \
+        #               * (self.Mach * self.Vs / (self.Re + self.altitude) - self.G0 / (self.Mach * self.Vs))
+        self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) - np.cos(self.theta) \
+                      * self.G0 / (self.Mach * self.Vs)
         # 质量变化
         self.dmass = -Thrust / Isp
         # X变化
@@ -388,24 +389,18 @@ class Planes_Env:
 
         self.steps_beyond_done += 1
 
-        self.observation = np.array([self.pitch*57.3, self.dpitch*57.3,mz0,mz,Mz,self.Jz,Lift,Drag,self.theta*57.3,self.theta_desired*57.3])
+        self.observation = np.array([self.pitch*57.3, self.dpitch*57.3,\
+                                     mz0,mz,Mz,self.Jz,Lift,Drag,self.theta*57.3,\
+                                     self.theta_desired*57.3,self.domega_z* 57.3,self.dtheta*57.3])
         return self.observation
-
-
-
 '''跟踪目标函数'''
 def target_func(cur_step):
-    y = 0.0/57.3
+    y = -6 /57.3
     return y
 def target_func_dot(cur_step):
     y_dot = (math.pi* math.sin(cur_step * math.pi / 2000) )/ (57.3*2000)
     return y_dot
 '''------------------------------PID控制器板块------------------------------'''
-
-# ------------------------------PID模型------------------------------
-#
-# start_step -------> start_step + simulation_step -1
-#
 class PID_model():
     def __init__(self):
         self.env = Planes_Env()
@@ -422,38 +417,45 @@ class PID_model():
         ierror = copy.deepcopy(self.ierror)
         last_pitch_desire = copy.deepcopy(self.last_pitch_desire)
         loss =0
-        last_action = copy.deepcopy(self.last_action)
-        alpha_count = 0
-        action_count = 0
-        if_alpha =False
+        loss1 = 0  # 误差限制
+        loss2 = 0  # 动作连续限制
+        loss3 = 0  # 标准差限制
+        loss4 = 0  # afra限制
         # ----------进行循环控制----------
         for i in range(simulation_step):
             self.env.pitch_desired = target_func(cur_step=start_step+i)
             self.env.dpithch_desired = (self.env.pitch_desired - last_pitch_desire)/self.env.tau
             last_pitch_desire = self.env.pitch_desired
-
             error =  self.env.pitch_desired*57.3   - self.env.observation[0]
             derror = self.env.dpithch_desired*57.3 - self.env.observation[1]
             ierror = ierror + error * self.env.tau
-
             action = np.clip(k1 * error + k2 * derror + k3 * ierror, -20, 20)
-
-
-            action_count += action**2
             action_list.append(action)
-            loss += math.fabs(error)
             self.env.step(np.array([action]))
-            if self.env.arfa*57.3 < -1 or self.env.arfa*57.3 >10:
-                if_alpha = True
-                # alpha_count += 1
-        if if_alpha:
-            loss += 45000
+            ## 设计loss1 ----------- error 约束
+            loss1 += math.fabs(error)
+            ## 设计loss2  action 断点衔接,
+            if i ==0 :
+                loss2 += float(10 * abs(action - self.last_action))
+            ## 设计loss4 ----------- alpha 约束
+            if self.env.arfa*57.3 < -0.5:                            # 【度°】
+                loss4 += 10000.0 * math.fabs((self.env.arfa + 0.5/57.3))
+                if self.env.arfa*57.3 < -1:
+                    loss4 += 40000 * math.fabs(self.env.arfa + 0.5/57.3)
+            elif self.env.arfa * 57.3 > 9.5:
+                loss4 += 10000.0 * math.fabs((self.env.arfa - 9.5/57.3))
+                if self.env.arfa*57.3 > 10:
+                    loss4 += 40000 * math.fabs(self.env.arfa - 9.5/57.3)
+        ## 设计loss3 ---------  action 平滑
+        loss3 = 0.05 * np.std(np.array(action_list)) * simulation_step
+        loss = loss1 + loss2 + loss3 + loss4
+        print('loss 数量级:')
+        print(loss1,loss2,loss3,loss4)
         # loss += alpha_count
         # loss += np.var(action_list)*simulation_step/2
         return loss
     ## 马赫数,高度,控制曲线,alpha曲线,theta曲线,jz ,Mz,mz0,jz
     def get_new_env(self, env,start_step,simulation_step = 5000,k1=1.5, k2=2.5, k3=0.5):
-
         self.env = copy.deepcopy(env)
         dez_list = []
         alpha = []
@@ -473,10 +475,10 @@ class PID_model():
         Drag_list = []
         theta_list = []
         desired_theta_list = []
-
+        dtheta_list = []
         true_theta_list = []
         true_theta_desire_list = []
-
+        domga_z_list = []
         for i in range(simulation_step):
             self.env.pitch_desired = target_func(cur_step=start_step + i)
             self.env.dpithch_desired = (self.env.pitch_desired - self.last_pitch_desire)/self.env.tau
@@ -503,6 +505,8 @@ class PID_model():
             Drag_list.append(self.env.observation[7])
             theta_list.append(self.env.observation[8])
             desired_theta_list.append(self.env.observation[9])
+            domga_z_list.append(self.env.observation[10])
+            dtheta_list.append(self.env.observation[11])
             desired_pitch.append(self.env.pitch_desired * 57.3)
             true_theta_list.append(self.env.observation[0] - self.env.arfa*57.3)
             true_theta_desire_list.append(self.env.pitch_desired* 57.3 - self.env.arfa*57.3)
@@ -511,8 +515,11 @@ class PID_model():
             error_list.append(self.error)
             derror_list.append(self.derror)
             ierror_list.append(self.ierror)
-        # print(start_step,self.last_pitch_desire,self.ierror,self.derror,self.error)
-        return self.env,alpha, dez_list, pitch, desired_pitch,q_list,height_list,mh_list,error_list,ierror_list,derror_list,mz0_list,mz_list,Mz_list,Jz_list,lift_list,Drag_list,theta_list,desired_theta_list,true_theta_list,true_theta_desire_list
+        self.last_action = copy.deepcopy(dez_list[-1])
+        return self.env,alpha, dez_list, pitch, desired_pitch,q_list,height_list,mh_list,\
+               error_list,ierror_list,derror_list,mz0_list,mz_list,Mz_list,\
+               Jz_list,lift_list,Drag_list,theta_list,desired_theta_list,\
+               true_theta_list,true_theta_desire_list,domga_z_list,dtheta_list
 
     def model_simulation( self,env,start_step,simulation_step = 5000,k1=1.5, k2=2.5, k3=0.5):
         self.env = copy.deepcopy(env)
@@ -530,7 +537,6 @@ class PID_model():
             self.env.pitch_desired = target_func(cur_step=start_step + i)
             self.env.dpithch_desired = (self.env.pitch_desired - last_pitch_desire)/self.env.tau
             last_pitch_desire = self.env.pitch_desired
-
             error = (self.env.pitch_desired * 57.3 - self.env.observation[0])
             derror = self.env.dpithch_desired * 57.3 - self.env.observation[1]
             ierror = ierror + error * self.env.tau
@@ -548,7 +554,6 @@ class PID_model():
         plt.title("Theta cruve between %d and %d"%(start_step,start_step+simulation_step))
         plt.show()
         return alpha, dez_list, theta, desired_theta
-
 '''------------------------------FR-PI2模块------------------------------'''
 
 """ -----------------------------------------------------------随机初始化参数-------------------------------------------------------------"""
@@ -714,7 +719,7 @@ class RL_PI2:
         ## 记录结果最小的
         if self.cur_loss < self.loss_opt_record:
             print("合成改进loss",self.current_training,self.loss_opt_record,self.cur_loss)
-            self.k_opt_record[:,0] = self.K[:,0]
+            self.k_opt_record = self.K
             self.loss_opt_record = self.cur_loss
         # 更新上一轮的loss
         self.last_loss = self.cur_loss
@@ -760,13 +765,13 @@ class RL_PI2:
                 print(self.current_training,time.time()-first_time)
             if self.current_training % 10 == 0 and self.loss_opt_record < self.loss_after_training[self.current_training]:
                 print("更新最优参数")
-                self.K[:,0] = self.k_opt_record[:,0]
+                self.K = self.k_opt_record
                 self.loss_after_training[self.current_training] = self.loss_opt_record
             if self.iterator_finished():
                 break
-        ## 后续数据对齐,保证数据对齐 training_times + 1
+        ## 后续数据对齐,保证数据对齐 training_times + 1  下面一定要注意，
         if self.loss_after_training[self.current_training] > self.loss_opt_after_training[self.current_training]:
-            self.K = self.K_opt_after_training[:, self.current_training]
+            self.K[:,0] = self.K_opt_after_training[:, self.current_training]
         for it in range(self.current_training,training_times+1):
             self.loss_after_training[it] = self.loss_after_training[self.current_training]
             self.K_after_training[:,it] = self.K_after_training[:,self.current_training]
@@ -796,9 +801,10 @@ class RL_PI2:
         Jz_list = []
         lift_list = []
         Drag_list = []
-
+        dtheta_list = []
         true_theta_list = []
         true_theta_desire_list = []
+        domga_z_list = []
 
         iterator = 0
         max_time = 0
@@ -809,8 +815,15 @@ class RL_PI2:
             for i in range(self.current_training+1):
                 K_list.append(self.K_after_training[:,i])
                 loss_list.append(self.loss_after_training[i])
-            self.env,alpha, delta_z, pitch, pitch_desired,q,height,mh,error,ierror,derror,mz0,mz,Mz,Jz,lift,drag,theta,theta_desire,true_theta,true_theta_desire = self.reward_model.get_new_env(self.env, self.cur_step, rolling_interval, self.K[0], self.K[1], self.K[2])
+            self.env,alpha, delta_z, pitch, pitch_desired,\
+            q,height,mh,error,ierror,derror,\
+            mz0,mz,Mz,Jz,lift,drag,\
+            theta,theta_desire,true_theta,\
+            true_theta_desire,domga_z,dtheta = \
+                self.reward_model.get_new_env(self.env, \
+                                              self.cur_step, rolling_interval, self.K[0], self.K[1], self.K[2])
             self.FR_time[iterator] = self.current_training
+
             self.K_after_roll_step[:, iterator] = self.K[:, 0]
             iterator += 1
             self.cur_step = iterator * rolling_interval
@@ -854,6 +867,10 @@ class RL_PI2:
                 true_theta_list.append(item)
             for item in true_theta_desire:
                 true_theta_desire_list.append(item)
+            for item in domga_z:
+                domga_z_list.append(item)
+            for item in dtheta:
+                dtheta_list.append(item)
             if iterator % 1==0:
                 plt.figure(2)
                 plt.plot(pitch_list, 'b+', label="time-pitch")
@@ -866,7 +883,17 @@ class RL_PI2:
                 # plt.title("Action Graph After %d Opt" % iterator)
                 # plt.show()
 
-        save_dir = "./photo/exp1/"
+        save_dir = "./photo/exp1_base_model/"
+        ## dtheta
+        plt.plot(dtheta_list, 'b+', label="dtheta")
+        plt.legend(loc="best")
+        plt.title("dtheta Graph After %d Opt" % iterator)
+        save_figure(save_dir, "dtheta.png")
+        ## dmoga_z
+        plt.plot(domga_z_list, 'b+', label="domgaz")
+        plt.legend(loc="best")
+        plt.title("domgaz Graph After %d Opt" % iterator)
+        save_figure(save_dir, "domgaz.png")
         ## 绘制pitch曲线
         plt.figure(2)
         plt.plot(pitch_list, 'b+', label="time-pitch")
@@ -961,7 +988,7 @@ class RL_PI2:
         plt.legend(loc="best")
         plt.title("Mz Graph After %d Opt" % iterator)
         # plt.show()
-        save_figure(save_dir,"Mz.png")
+        save_figure(save_dir,"Mz_big.png")
 
         # 绘制Jz曲线
         plt.plot(Jz_list, 'b+', label="Jz")
@@ -1025,6 +1052,7 @@ if __name__ == "__main__":
     training_times = 20
     model = RL_PI2(if_filter=False, attenuation_step_length=1, alpha=0.85)
     model.set_initial_value([0, 0, 0])
-    alpha_1, delta_z_1, theta_1, theta_desired_1, k_after_1, loss_1, cur_time_1 = model.rolling_optimization(rolling_interval=100,
-                                                                                               total_step=2000)
-
+    alpha_1, delta_z_1, theta_1, theta_desired_1, \
+    k_after_1, loss_1, cur_time_1 = \
+        model.rolling_optimization(rolling_interval=250,\
+                                   total_step=8000)

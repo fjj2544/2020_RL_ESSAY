@@ -434,7 +434,6 @@ def policy_test(env, policy,RENDER,test_number):
         plt.show()
     # print(reward_sum)
     return reward_sum/test_number
-
 if __name__=="__main__":
     env = Planes_Env()
     #定义舵角的取值范围[-20,20]
@@ -447,10 +446,3 @@ if __name__=="__main__":
     #训练策略网络
     policy_train(env, brain,exp_buffer,training_num)
     policy_test(env,brain,True,1)
-
-
-
-
-
-
-

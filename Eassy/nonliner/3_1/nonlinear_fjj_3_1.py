@@ -395,7 +395,7 @@ class Planes_Env:
 
 '''跟踪目标函数'''
 def target_func(cur_step):
-    y = math.sin(cur_step  * math.pi / 1000)/57.3
+    y = 1e-5/57.3
     return y
 def target_func_dot(cur_step):
     y_dot = (math.pi* math.sin(cur_step * math.pi / 2000) )/ (57.3*2000)
@@ -987,7 +987,7 @@ if __name__ == "__main__":
     model = RL_PI2(if_filter=False, attenuation_step_length=1, alpha=0.85)
     model.set_initial_value([0, 0, 0])
     alpha, delta_z, theta, theta_desired, k_after, loss, cur_time = model.rolling_optimization(rolling_interval=250,
-                                                                                               total_step=2000)
+                                                                                               total_step=4000)
     alpha_list.append(alpha)
     delta_z_list.append(delta_z)
     theta_list.append(theta)

@@ -3,7 +3,6 @@ import numpy as np
 import math
 import time
 import matplotlib.pyplot as plt
-from sklearn import preprocessing
 import random
 import multiprocessing as mp
 import copy
@@ -32,7 +31,7 @@ belief_times = 50               # 稳定次数
 # 强化学习
 RAND_INIT = True
 training_times = 100            # 训练次数
-roll_outs = 20                  # 并行数量
+roll_outs = 48                  # 并行数量
 Max_Adjust_times = 1000         # 最大调整次数
 '''------------------------------辅助模块------------------------------'''
 
@@ -44,10 +43,8 @@ def mkdir(path):
     isExists = os.path.exists(path)
     if not isExists:
         os.makedirs(path)
-        print(path + ' Created successfully')
         return True
     else:
-        print(path + ' Directory already exists')
         return False
 
 # 存储实验数据 e.g. save_data("./data/","loss.txt",loss)
@@ -64,7 +61,6 @@ def read_data(dir):
 def save_figure(dir,name):
     mkdir(dir)
     plt.savefig(dir+name,bbox_inches = 'tight')
-    plt.cla()
 
 # 绘制控制曲线
 def plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number = 3):
@@ -178,7 +174,11 @@ class Planes_Env:
         self.Sr = 334.73                # 参考横截面积【米^2】
         self.Jz = 8288700               # Jz转动惯量
         self.Re = 6371000               # 地球半径【米】
-
+        # 力
+        self.Lift = 0.0
+        self.Drag = 0.0
+        self.Mz = 0.0
+        self.temp = 0.0
         # 状态
         self.observation = np.array([0.0, 0.0])
         self.steps_beyond_done = 0
@@ -191,7 +191,7 @@ class Planes_Env:
         self.delta_z_threhold_min = -20     # 最小舵偏【度】
 
         # 时间
-        self.tau = 0.005
+        self.tau = 0.01
 
     # 重设环境
     def reset(self):
@@ -203,40 +203,45 @@ class Planes_Env:
         np.random.seed(n)
         self.observation = np.array([0.0, 0.0])
         # 一阶变量
-        self.altitude = 33500.0
-        self.Mach = 15.0
-        self.theta = 0.0
-        self.pitch = 0 / 57.3
-        self.rrange = 0.0
-        self.mass = 83191
-        self.omega_z = 0.0
+        self.altitude = 33500.0     # y高度【米】
+        self.Mach = 15.0            # M速度【马赫】
+        self.theta = 0.0            # 飞行角【弧度】
+        self.pitch = 0.0 / 57.3     # 俯仰角【弧度】
+        self.rrange = 0.0           # X距离【米】
+        self.mass = 83191           # 质量【千克】
+        self.omega_z = 0.0          # 俯仰角速度【弧度/秒】
         # 速度
-        self.daltitude = 0.0
-        self.dMach = 0.0
-        self.dtheta = 0.0
-        self.dpitch = 0.0
-        self.drrange = 0.0
-        self.dmass = 0.0
-        self.domega_z = 0.0
+        self.daltitude = 0.0            # 高度速度【米/秒】
+        self.dMach = 0.0                # 速度变化【马赫/秒】
+        self.dtheta = 0.0               # theta变化【弧度/秒】
+        self.dpitch = 0.0               # 俯仰角速度【弧度/秒】
+        self.drrange = 0.0              # 水平速度【米/秒】
+        self.dmass = 0.0                # 质量变化【千克/秒】
+        self.domega_z = 0.0             # 俯仰角加速度【弧度/秒2】
         # 攻角
-        self.arfa = 0.0 / 57.3
-        # 重置目标
-        self.pitch_desired = PITCH_D / 57.3
-        self.dpithch_desired = 0.0
-        self.theta_desired = 0.0
-        self.dtheta_desired = 0.0
-        self.steps_beyond_done = 0
+        self.arfa = 0.0 / 57.3          # 攻角【弧度】
+        # 目标
+        self.pitch_desired = PITCH_D / 57.3     # 俯仰角目标【弧度】
+        self.dpithch_desired = 0.0              # 俯仰角速度【弧度/秒】
+        self.theta_desired = 0.0                # 飞行角目标【弧度】
+        self.dtheta_desired = 0.0               # 飞行角速度【弧度/秒】
+        # 力
+        self.Lift = 0.0
+        self.Drag = 0.0
+        self.Mz = 0.0
 
         return self.observation
 
     # 采取动作
     def step(self, action):
+        # 注意：ACTION的单位为度°
         action = action[0]
+        # 限幅
         if action < -20:
             action = -20
         elif action > 20:
             action = 20
-        # 变为度数
+        # 变为度°
         Alpha_deg = self.arfa*57.3
         Jzc = 99.635
         # 空气密度rho
@@ -313,6 +318,7 @@ class Planes_Env:
               + 8.288 * (10.0 ** (-6)) * (Alpha_deg ** 4) \
               + 1.082 * (10.0 ** (-8)) * (self.Mach ** 5) \
               - 2.789 * (10.0 ** (-7)) * (Alpha_deg ** 5)
+        self.temp = mz0
         mz_e = - 5.67 * (10.0 ** (-5)) \
                - 1.51 * (10.0 ** (-6)) * self.Mach \
                - 6.59 * (10.0 ** (-5)) * Alpha_deg \
@@ -352,10 +358,13 @@ class Planes_Env:
         mz = mz0 + mz_e + mz_a + mz_r + mzz * self.omega_z * 57.3 * self.Lr / (2 * self.Mach * self.Vs)
         # 升力
         Lift = Qdyn * CL * self.Sr
+        self.Lift = Lift
         # 阻力
         Drag = Qdyn * CD * self.Sr
+        self.Drag = Drag
         # 俯仰力矩
         Mz = Qdyn * mz * self.Sr * self.Lr
+        self.Mz = Mz
         # 推力 P
         Thrust = 1.9 * (10.0 ** 5.0)
         # 比冲Isp
@@ -366,8 +375,10 @@ class Planes_Env:
         # v变化[马赫/s]
         self.dMach = (Thrust * np.cos(self.arfa) - Drag - self.mass * self.G0 * np.sin(self.theta)) / (self.mass *self.Vs)
         # 飞行角速度
-        self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) + np.cos(self.theta) \
-                      * (self.Mach * self.Vs / (self.Re + self.altitude) - self.G0 / (self.Mach * self.Vs))
+        self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) + np.cos(self.theta) * (self.Mach * self.Vs / (self.Re + self.altitude) - self.G0 / (self.Mach * self.Vs))
+        # self.dtheta = (Thrust * np.sin(self.arfa) + Lift) / (self.mass * self.Mach * self.Vs) - np.cos(self.theta) * (self.G0 / (self.Mach * self.Vs))
+
+
         # 质量变化
         self.dmass = -Thrust / Isp
         # X变化
@@ -388,18 +399,25 @@ class Planes_Env:
 
         self.steps_beyond_done += 1
 
-        self.observation = np.array([self.pitch*57.3, self.dpitch*57.3,mz0,mz,Mz,self.Jz,Lift,Drag,self.theta*57.3,self.theta_desired*57.3])
+        self.observation = np.array([self.pitch*57.3, self.dpitch*57.3])
         return self.observation
 
 
 
-'''跟踪目标函数'''
+'''------------------------------跟踪目标函数------------------------------'''
+# 注意单位为【弧度rad】，一定要有/57.3
 def target_func(cur_step):
-    y = 0.0/57.3
+    if cur_step < 2000:
+        y = 2.0*math.sin(cur_step * math.pi / 1500)*math.cos((cur_step-123) * math.pi / 8000)/57.3
+    else:
+        y = (1.2 + math.e**math.sin(cur_step * math.pi / 3000) + math.cos(cur_step * math.pi / 5000))/57.3
     return y
+
 def target_func_dot(cur_step):
-    y_dot = (math.pi* math.sin(cur_step * math.pi / 2000) )/ (57.3*2000)
+    y_dot = target_func(cur_step+1) - target_func(cur_step)
+    y_dot = y_dot/0.01
     return y_dot
+
 '''------------------------------PID控制器板块------------------------------'''
 
 # ------------------------------PID模型------------------------------
@@ -409,137 +427,197 @@ def target_func_dot(cur_step):
 class PID_model():
     def __init__(self):
         self.env = Planes_Env()
-        self.last_pitch_desire = 0
-        self.ierror = 0
-        self.derror = 0
-        self.error = 0
-        self.alpha = 0 # 滤波系数,考虑采用均值滤波
-        self.last_action = 0 # 上一次动作,用于均值滤波采样
+        self.action = 0.0
+        self.error_init = 0.0
+        self.derror_init = 0.0
+        self.ierror_init = 0.0
+
     # 进行一次PID模拟
     def get_epsolid_reward(self,env,start_step,simulation_step = 5000, k1=1.5, k2=2.5, k3=0.5):
-        self.env = copy.deepcopy(env)
+        self.env = copy.copy(env)
         action_list = []
-        ierror = copy.deepcopy(self.ierror)
-        last_pitch_desire = copy.deepcopy(self.last_pitch_desire)
-        loss =0
-        last_action = copy.deepcopy(self.last_action)
-        alpha_count = 0
-        action_count = 0
-        if_alpha =False
+        ierror = self.ierror_init
+        # error = self.error_init
+        # derror = self.derror_init
+        if_alpha = False
+        loss1 = 0.0     # 误差限制
+        loss2 = 0.0     # 标准差限制
+        loss3 = 0.0     # 起始动作限制
+        loss4 = 0.0     # arfa限制
+        pitch_desired_clip = 0.0            # 【弧度rad】
         # ----------进行循环控制----------
         for i in range(simulation_step):
-            self.env.pitch_desired = target_func(cur_step=start_step+i)
-            self.env.dpithch_desired = (self.env.pitch_desired - last_pitch_desire)/self.env.tau
-            last_pitch_desire = self.env.pitch_desired
+            # ------进行缓冲限幅------
+            if math.fabs(pitch_desired_clip) <= 1e-3:
+                self.env.pitch_desired = target_func(cur_step=start_step+i)     # 【弧度rad】
+            else:
+                self.env.pitch_desired = pitch_desired_clip                     # 【弧度rad】
+                pitch_desired_clip = 0.0
 
-            error =  self.env.pitch_desired*57.3   - self.env.observation[0]
-            derror = self.env.dpithch_desired*57.3 - self.env.observation[1]
-            ierror = ierror + error * self.env.tau
+            self.env.dpithch_desired = target_func_dot(cur_step=start_step+i)   # 【弧度rad】
+            error =  self.env.pitch_desired*57.3   - self.env.observation[0]    # 【度°】
+            derror = self.env.dpithch_desired*57.3 - self.env.observation[1]    # 【度°】
+            ierror = ierror + error * self.env.tau                              # 【度°】
 
-            action = np.clip(k1 * error + k2 * derror + k3 * ierror, -20, 20)
-
-
-            action_count += action**2
+            action = np.clip(k1 * error + k2 * derror + k3 * ierror, -20, 20)   # 【度°】
             action_list.append(action)
-            loss += math.fabs(error)
+            # 计算损失
+            if i == 0:
+                loss3 = float(10*abs(action-self.action))
+            loss1 += math.fabs(error)
             self.env.step(np.array([action]))
-            if self.env.arfa*57.3 < -1 or self.env.arfa*57.3 >10:
+
+            if self.env.arfa*57.3 < -0.5:                            # 【度°】
+                pitch_desired_clip = self.env.theta-0.3/57.3         # 【弧度rad】
+            elif self.env.arfa*57.3 > 9.5:                           # 【度°】
+                pitch_desired_clip = self.env.theta+9.3/57.3         # 【弧度rad】
+
+            if self.env.arfa*57.3 < -1 or self.env.arfa*57.3 > 10:   # 【度°】
                 if_alpha = True
-                # alpha_count += 1
+        loss2 = 0.05*np.std(np.array(action_list))*simulation_step
         if if_alpha:
-            loss += 45000
-        # loss += alpha_count
-        # loss += np.var(action_list)*simulation_step/2
+            loss4 = max(loss1 + loss2 + loss3, 45000)
+        print("损失的数量级：")
+        print(str(loss1)+"\t"+str(loss2)+"\t"+str(loss3)+"\t"+str(loss4))
+        # TODO：更改损失函数
+        # loss += np.std(action_list)*simulation_step/2
+        loss = loss1+ loss2 + loss3 + loss4
         return loss
-    ## 马赫数,高度,控制曲线,alpha曲线,theta曲线,jz ,Mz,mz0,jz
+
     def get_new_env(self, env,start_step,simulation_step = 5000,k1=1.5, k2=2.5, k3=0.5):
-
-        self.env = copy.deepcopy(env)
-        dez_list = []
-        alpha = []
-        pitch = []
-        desired_pitch = []
-        mh_list = []
-        height_list = []
-        q_list = []
-        ierror_list = []
-        derror_list = []
-        error_list = []
-        mz0_list = []
-        mz_list = []
-        Mz_list = []
-        Jz_list = []
-        lift_list = []
+        self.env = copy.copy(env)
+        # 记录变量
+        # --- 力
+        Lift_list = []
         Drag_list = []
+        Mz_list = []
+        # --- 属性
+        Mass_list = []
+        Altitude_list = []
+        Jz_list = []
+        Mach_list = []
+
+        # --- 角度
+        arfa_list = []
+        dez_list = []
         theta_list = []
-        desired_theta_list = []
+        desired_theta = []
+        pitch_list = []
 
-        true_theta_list = []
-        true_theta_desire_list = []
+        # 关键系数
+        TEMP = []
 
+        # EXCEL写入数值
+        ACTION_TEMP_P = []
+        ACTION_TEMP_D = []
+        ACTION_TEMP_I = []
+        ACTION = []
+
+        ierror = self.ierror_init
+        # error = self.error_init
+        # derror = self.derror_init
+
+        pitch_desired_clip = 0.0
         for i in range(simulation_step):
-            self.env.pitch_desired = target_func(cur_step=start_step + i)
-            self.env.dpithch_desired = (self.env.pitch_desired - self.last_pitch_desire)/self.env.tau
-            self.last_pitch_desire = self.env.pitch_desired
-            self.error = (self.env.pitch_desired * 57.3 - self.env.observation[0])
-            self.derror = self.env.dpithch_desired * 57.3 - self.env.observation[1]
-            # print(self.env.dpithch_desired * 57.3 , self.env.observation[1])
-            self.ierror = self.ierror + self.error * self.env.tau
+            if math.fabs(pitch_desired_clip) <= 1e-3:
+                self.env.pitch_desired = target_func(cur_step=start_step + i)   # 【弧度rad】
+            else:
+                self.env.pitch_desired = pitch_desired_clip                     # 【弧度rad】
+                pitch_desired_clip = 0.0
+            self.env.dpithch_desired = target_func_dot(cur_step=start_step + i) # 【弧度rad】
 
+            error = (self.env.pitch_desired * 57.3 - self.env.observation[0])   # 【度°】
+            derror = self.env.dpithch_desired * 57.3 - self.env.observation[1]  # 【度°】
+            ierror = ierror + error * self.env.tau                              # 【度°】
+            ACTION_TEMP_P.append(k1 * error)
+            ACTION_TEMP_D.append(k2 * derror)
+            ACTION_TEMP_I.append(k3 * ierror)
             # 在当前情况下进行进行控制
-            action = np.clip(k1 * self.error + k2 * self.derror + k3 * self.ierror,-20,20)
-
+            action = np.clip(k1 * error + k2 * derror + k3 * ierror,-20,20)     # 【度°】
+            self.action = action
             self.env.step(np.array([action]))
-            # 记录数据
+
+            # 缓冲区
+            if self.env.arfa*57.3 < -0.5:                                       # 【度°】
+                pitch_desired_clip = self.env.theta- 0.3/57.3                   # 【弧度rad】
+            elif self.env.arfa*57.3 > 9.5:                                      # 【度°】
+                pitch_desired_clip = self.env.theta+ 9.3/57.3                   # 【弧度rad】
+            # 记录变量
+            # ---角度
             dez_list.append(action)
-            alpha.append(self.env.arfa*57.3)
-            pitch.append(self.env.observation[0])
-            q_list.append(self.env.observation[1])
-            mz0_list.append(self.env.observation[2])
-            mz_list.append(self.env.observation[3])
-            Mz_list.append(self.env.observation[4])
-            Jz_list.append(self.env.observation[5])
-            lift_list.append(self.env.observation[6])
-            Drag_list.append(self.env.observation[7])
-            theta_list.append(self.env.observation[8])
-            desired_theta_list.append(self.env.observation[9])
-            desired_pitch.append(self.env.pitch_desired * 57.3)
-            true_theta_list.append(self.env.observation[0] - self.env.arfa*57.3)
-            true_theta_desire_list.append(self.env.pitch_desired* 57.3 - self.env.arfa*57.3)
-            height_list.append(self.env.altitude)
-            mh_list.append(self.env.Mach)
-            error_list.append(self.error)
-            derror_list.append(self.derror)
-            ierror_list.append(self.ierror)
-        # print(start_step,self.last_pitch_desire,self.ierror,self.derror,self.error)
-        return self.env,alpha, dez_list, pitch, desired_pitch,q_list,height_list,mh_list,error_list,ierror_list,derror_list,mz0_list,mz_list,Mz_list,Jz_list,lift_list,Drag_list,theta_list,desired_theta_list,true_theta_list,true_theta_desire_list
+            arfa_list.append(self.env.arfa)
+            pitch_list.append(self.env.observation[0])
+            desired_theta.append(target_func(cur_step=start_step + i) * 57.3)   # 【度°】
+            # --- 力
+            Lift_list.append(self.env.Lift)
+            Drag_list.append(self.env.Drag)
+            Mz_list.append(self.env.Mz)
+            # --- 属性
+            Mass_list.append(self.env.mass)
+            Altitude_list.append(self.env.altitude)
+            Jz_list.append(self.env.Jz)
+            Mach_list.append(self.env.Mach)
+            theta_list.append(self.env.theta)
+            TEMP.append(self.env.temp)
+        # 返回一个完整序列
+        DATA = []
+        # 角度
+        DATA.append(dez_list)
+        DATA.append(arfa_list)
+        DATA.append(pitch_list)
+        DATA.append(desired_theta)
+        # 力
+        DATA.append(Lift_list)
+        DATA.append(Drag_list)
+        DATA.append(Mz_list)
+        # 属性
+        DATA.append(Mass_list)
+        DATA.append(Altitude_list)
+        DATA.append(Jz_list)
+        DATA.append(Mach_list)
+        # theta
+        DATA.append(theta_list)
+        DATA.append(TEMP)
+        ACTION.append(ACTION_TEMP_P)
+        ACTION.append(ACTION_TEMP_D)
+        ACTION.append(ACTION_TEMP_I)
+        self.ierror_init = ierror
+        return self.env, DATA, ACTION
 
     def model_simulation( self,env,start_step,simulation_step = 5000,k1=1.5, k2=2.5, k3=0.5):
-        self.env = copy.deepcopy(env)
+        self.env = copy.copy(env)
         alpha = []
         theta = []
         desired_theta = []
         dez_list = []
-        ierror = copy.deepcopy(self.ierror)
-        last_pitch_desire = copy.deepcopy(self.last_pitch_desire)
-        # ierror = 0
-        # last_pitch_desire =0
+        ierror = self.ierror_init
+        # error = self.error_init
+        # derror = self.derror_init
         time = []
+        pitch_desired_clip = 0.0
         for i in range(simulation_step):
+            # 缓冲
+            if math.fabs(pitch_desired_clip) <= 1e-3:
+                self.env.pitch_desired = target_func(cur_step=start_step + i)   # 【弧度Rad】
+            else:
+                self.env.pitch_desired = pitch_desired_clip                     # 【弧度rad】
+                pitch_desired_clip = 0.0
+            self.env.dpithch_desired = target_func_dot(cur_step=start_step + i) # 【弧度】
             # TODO:设计目标函数
-            self.env.pitch_desired = target_func(cur_step=start_step + i)
-            self.env.dpithch_desired = (self.env.pitch_desired - last_pitch_desire)/self.env.tau
-            last_pitch_desire = self.env.pitch_desired
-
-            error = (self.env.pitch_desired * 57.3 - self.env.observation[0])
-            derror = self.env.dpithch_desired * 57.3 - self.env.observation[1]
+            error = (self.env.pitch_desired * 57.3 - self.env.observation[0])   # 【度°】
+            derror = self.env.dpithch_desired * 57.3 - self.env.observation[1]  # 【度°】
             ierror = ierror + error * self.env.tau
-            action = np.clip(k1 * error + k2 * derror + k3 * ierror, -20, 20)
+            action = np.clip(k1 * error + k2 * derror + k3 * ierror, -20, 20)   # 【度°】
             dez_list.append(action)
             self.env.step(np.array([action]))
+            # 缓冲区
+            if self.env.arfa*57.3 < -0.5:                                       # 【度°】
+                pitch_desired_clip = self.env.theta-0.3/57.3                    # 【弧度Rad】
+            elif self.env.arfa*57.3 > 9.5:                                      # 【度°】
+                pitch_desired_clip = self.env.theta+9.3/57.3                    # 【弧度rad】
             alpha.append(self.env.arfa * 57.3)
             theta.append(self.env.observation[0])
-            desired_theta.append(self.env.pitch_desired * 57.3)
+            desired_theta.append(target_func(cur_step=start_step + i) * 57.3)
             time.append(i)
         plt.figure(2)
         plt.plot(time, theta, label="time-theta")
@@ -629,8 +707,8 @@ class RL_PI2:
         ## 最优K记录
         self.K_opt_after_training = np.zeros((3, training_times+Max_Adjust_times), dtype=np.float64)
         self.loss_opt_after_training = np.zeros((training_times + Max_Adjust_times, 1), dtype=np.float64)
-        ## 关键
     ## 重新设置training 参数
+
     def reset_training_state(self):
         # 方差重置
         self.sigma[0] = 1.0
@@ -649,7 +727,7 @@ class RL_PI2:
 
         self.cur_loss = self.reward_model.get_epsolid_reward(self.env, self.cur_step, self.opt_steps, self.K[0], self.K[1], self.K[2])
         self.loss_opt_record = self.cur_loss
-        self.last_loss= self.cur_loss
+        self.last_loss = self.cur_loss
 
         self.K_after_training[:, self.current_training] = self.K[:, 0]
         self.loss_after_training[self.current_training] = self.cur_loss
@@ -660,13 +738,14 @@ class RL_PI2:
             self.K[0] = random.uniform(Kp_Min,Kp_Max)
             self.K[1] = random.uniform(Kd_Min,Kd_Max)
             self.K[2] = random.uniform(Ki_Min,Ki_Max)
-            self.K0 = copy.deepcopy(self.K)  # 记录初始值的
+            self.K0 = self.K  # 记录初始值的
         else:
             self.K[0] = INIT_K[0]
             self.K[1] = INIT_K[1]
             self.K[2] = INIT_K[2]
-            self.K0 = copy.deepcopy(self.K)  # 记录初始值的
+            self.K0 = self.K  # 记录初始值的
         self.reset_training_state()
+    # 计算轨迹损失
     def cal_trajectory_loss(self, j):
         self.current_roll = j
         delta1 = np.random.normal(0, self.sigma[0], 1)
@@ -677,6 +756,8 @@ class RL_PI2:
         cur_k3 = self.K[2] + delta3
         cur_loss = self.reward_model.get_epsolid_reward(self.env, self.cur_step, self.opt_steps, cur_k1, cur_k2, cur_k3)
         return delta1,delta2,delta3,cur_k1,cur_k2,cur_k3, cur_loss
+
+    # 策略评估
     def policy_evl(self):
         multi_res = [poll.apply_async(self.cal_trajectory_loss, (j,)) for j in range(roll_outs)]
         for j, res in enumerate(multi_res):
@@ -687,10 +768,60 @@ class RL_PI2:
             self.K_roll[1, j] = res.get()[4]
             self.K_roll[2, j] = res.get()[5]
             self.loss[j] = res.get()[6]
+
+    # 策略改进
     def policy_improve(self):
         exponential_value_loss = np.zeros((roll_outs, 1), dtype=np.float64)
         probability_weighting = np.zeros((roll_outs, 1), dtype=np.float64)
         loss =copy.deepcopy(self.loss)
+        # TODO：改进为退火/滤波
+
+        # 退火，但是需要更改另一个部分的方差提高
+        '''
+        prob_bad = 0.0
+        for i2 in range(roll_outs):
+            if loss[i2] > self.cur_loss:
+                prob_bad += 1/roll_outs
+        # 如果退火，则不更新
+        if prob_bad > 0.8:
+            self.sigma[0] = self.sigma[0]*self.alpha
+            self.sigma[1] = self.sigma[1]*self.alpha
+            self.sigma[2] = self.sigma[2]*self.alpha
+            for i2 in range(roll_outs):
+                probability_weighting[i2] = 0.0
+        else:
+            if ((loss.max() - loss.min()) < 1e-3):
+                probability_weighting[i2] = 1 / roll_outs
+            else:
+                for i2 in range(roll_outs):
+                    exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (loss[i2] - loss.min())
+                                                        / (loss.max() - loss.min()))
+                for i2 in range(roll_outs):
+                    probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
+        '''
+        '''
+        # 滤波：
+        if ((loss.max() - loss.min()) <1e-3):
+            # 比较好的解
+            if loss.min() < self.cur_loss:
+                for i2 in range(roll_outs):
+                    probability_weighting[i2] = 1/roll_outs
+            # 没有好的解
+            else:
+                for i2 in range(roll_outs):
+                    probability_weighting[i2] = 0
+        else:
+            for i2 in range(roll_outs):
+                # 滤波不好的数值
+                if loss[i2] >self.cur_loss:
+                    self.k_delta[0, i2] = 0.0
+                    self.k_delta[1, i2] = 0.0
+                    self.k_delta[2, i2] = 0.0
+                exponential_value_loss[i2] = np.exp(-self.PI2_coefficient * (loss[i2] - loss.min())/ (loss.max() - loss.min()))
+            for i2 in range(roll_outs):
+                probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
+        '''
+        # 无处理的路径积分：
         if ((loss.max() - loss.min()) <1e-3):
             for i2 in range(roll_outs):
                 probability_weighting[i2] = 1/roll_outs
@@ -700,6 +831,7 @@ class RL_PI2:
                                                     / (loss.max() - loss.min()))
             for i2 in range(roll_outs):
                 probability_weighting[i2] = exponential_value_loss[i2] / np.sum(exponential_value_loss)
+
         temp_k = np.dot(self.k_delta, probability_weighting)
         self.K = self.K + temp_k
         self.cur_loss = self.reward_model.get_epsolid_reward(self.env, self.cur_step, self.opt_steps, self.K[0], self.K[1],
@@ -708,16 +840,15 @@ class RL_PI2:
         ## 记录样本中最小的
         min_loss_index = np.argmin(loss)
         if loss[min_loss_index] < self.loss_opt_record:
-            print("搜索改进loss", self.current_training,self.loss_opt_record,loss[min_loss_index])
             self.k_opt_record[:,0] = self.K_roll[:, min_loss_index]
             self.loss_opt_record = loss[min_loss_index]
         ## 记录结果最小的
         if self.cur_loss < self.loss_opt_record:
-            print("合成改进loss",self.current_training,self.loss_opt_record,self.cur_loss)
-            self.k_opt_record[:,0] = self.K[:,0]
+            self.k_opt_record = self.K
             self.loss_opt_record = self.cur_loss
         # 更新上一轮的loss
         self.last_loss = self.cur_loss
+
     # 判断迭代停止,如果是best k 主导的呢？
     def iterator_finished(self):
         # flag1 = sum((self.K_after_training[:, self.current_training - 1] - self.K_after_training[:, self.current_training]) ** 2)
@@ -729,8 +860,10 @@ class RL_PI2:
             return True
         else:
             return False
+
     def training(self):
         print("开始训练")
+        print(self.sigma)
         self.reset_training_state()
         while self.current_training < training_times:
 
@@ -738,13 +871,13 @@ class RL_PI2:
             if self.current_training % self.attenuation_step_length == 0 :
                 self.sigma = self.sigma/self.alpha
             # --------------------模拟仿真--------------------
-            # if self.current_training - self.debug_interval >= 0 and self.current_training % self.debug_interval == 0 :
-                # # print("绘制损失函数曲线")
-                # plt.plot(self.loss_opt_after_training[self.current_training -self.debug_interval:self.current_training])
-                # plt.title("loss between %d and %d epoch" % (self.current_training - self.debug_interval, self.current_training))
-                # plt.show()
-                # # print("绘制仿真曲线")
-                # self.reward_model.model_simulation(self.env, self.cur_step, self.opt_steps, self.k_opt_record[0],self.k_opt_record[1],self.k_opt_record[2])
+            if self.current_training - self.debug_interval >= 0 and self.current_training % self.debug_interval == 0 :
+                # print("绘制损失函数曲线")
+                plt.plot(self.loss_opt_after_training[self.current_training -self.debug_interval:self.current_training])
+                plt.title("loss between %d and %d epoch" % (self.current_training - self.debug_interval, self.current_training))
+                plt.show()
+                # print("绘制仿真曲线")
+                self.reward_model.model_simulation(self.env, self.cur_step, self.opt_steps, self.k_opt_record[0],self.k_opt_record[1],self.k_opt_record[2])
 
             # --------------------策略评估和改进--------------------
             self.policy_evl()
@@ -760,7 +893,7 @@ class RL_PI2:
                 print(self.current_training,time.time()-first_time)
             if self.current_training % 10 == 0 and self.loss_opt_record < self.loss_after_training[self.current_training]:
                 print("更新最优参数")
-                self.K[:,0] = self.k_opt_record[:,0]
+                self.K = self.k_opt_record
                 self.loss_after_training[self.current_training] = self.loss_opt_record
             if self.iterator_finished():
                 break
@@ -772,33 +905,37 @@ class RL_PI2:
             self.K_after_training[:,it] = self.K_after_training[:,self.current_training]
             self.K_opt_after_training[:, it] =  self.K_opt_after_training[:,self.current_training]
         return self.K[0],self.K[1],self.K[2],self.K_after_training,self.loss_after_training,self.current_training
+
     # 滚动优化
-    def rolling_optimization(self, rolling_interval=250, total_step=5000):
+    def rolling_optimization(self, rolling_interval=250, total_step=1000):
         opt_times = math.ceil(total_step / rolling_interval)
         self.opt_steps = rolling_interval*2  #往后优化多少步
-        theta_list = []
-        theta_desired_list =[]
-        pitch_desire_list = []
-        pitch_list = []
-        alpha_list =[]
-        delta_z_list = []
+        # theta_list = []
+        #theta_desired_list =[]
+        #alpha_list =[]
+        #delta_z_list = []
         K_list  =[]
         loss_list = []
-        mh_list = []
-        height_list = []
-        q_list = []
-        error_list =[]
-        ierror_list = []
-        derror_list = []
-        mz0_list = []
-        mz_list = []
-        Mz_list = []
-        Jz_list = []
-        lift_list = []
+        #-------------------------
+        Lift_list = []
         Drag_list = []
-
-        true_theta_list = []
-        true_theta_desire_list = []
+        Mz_list = []
+        # --- 属性
+        Mass_list = []
+        Altitude_list = []
+        Jz_list = []
+        Mach_list = []
+        # --- 角度
+        pitch_list = []
+        arfa_list = []
+        dez_list = []
+        theta_list = []
+        desired_theta_list = []
+        temp_list = []
+        #-------------------------
+        action_p = []
+        action_d = []
+        action_i = []
 
         iterator = 0
         max_time = 0
@@ -809,185 +946,137 @@ class RL_PI2:
             for i in range(self.current_training+1):
                 K_list.append(self.K_after_training[:,i])
                 loss_list.append(self.loss_after_training[i])
-            self.env,alpha, delta_z, pitch, pitch_desired,q,height,mh,error,ierror,derror,mz0,mz,Mz,Jz,lift,drag,theta,theta_desire,true_theta,true_theta_desire = self.reward_model.get_new_env(self.env, self.cur_step, rolling_interval, self.K[0], self.K[1], self.K[2])
+            self.env, DATA,ACTION = self.reward_model.get_new_env(self.env, self.cur_step, rolling_interval, self.K[0], self.K[1], self.K[2])
             self.FR_time[iterator] = self.current_training
             self.K_after_roll_step[:, iterator] = self.K[:, 0]
             iterator += 1
             self.cur_step = iterator * rolling_interval
-            for item in alpha:
-                alpha_list.append(item)
-            for item in delta_z:
-                delta_z_list.append(item)
-            for item in pitch:
+
+            for item in ACTION[0]:
+                action_p.append(item)
+            action_p.append(99999)
+            for item in ACTION[1]:
+                action_d.append(item)
+            action_d.append(99999)
+            for item in ACTION[2]:
+                action_i.append(item)
+            action_i.append(99999)
+            # 添加变量
+            for item in DATA[0]:
+                dez_list.append(item)
+            for item in DATA[1]:
+                arfa_list.append(57.3*item)
+            for item in DATA[2]:
                 pitch_list.append(item)
-            for item in pitch_desired:
-                pitch_desire_list.append(item)
-            for item in mh:
-                mh_list.append(item)
-            for item in q:
-                q_list.append(item)
-            for item in height:
-                height_list.append(item)
-            for item in error:
-                error_list.append(item)
-            for item in ierror:
-                ierror_list.append(item)
-            for item in derror:
-                derror_list.append(item)
-            for item in mz0:
-                mz0_list.append(item)
-            for item in mz:
-                mz_list.append(item)
-            for item in Mz:
-                Mz_list.append(item)
-            for item in Jz:
-                Jz_list.append(item)
-            for item in lift:
-                lift_list.append(item)
-            for item in drag:
+            for(item) in DATA[3]:
+                desired_theta_list.append(item)
+            for item in DATA[4]:
+                Lift_list.append(item)
+            for item in DATA[5]:
                 Drag_list.append(item)
-            for item in theta:
-                theta_list.append(item)
-            for item in theta_desire:
-                theta_desired_list.append(item)
-            for item in true_theta:
-                true_theta_list.append(item)
-            for item in true_theta_desire:
-                true_theta_desire_list.append(item)
+            for item in DATA[6]:
+                Mz_list.append(item)
+            for item in DATA[7]:
+                Mass_list.append(item)
+            for item in DATA[8]:
+                Altitude_list.append(item)
+            for item in DATA[9]:
+                Jz_list.append(item)
+            for item in DATA[10]:
+                Mach_list.append(item)
+            for item in DATA[11]:
+                theta_list.append(57.3*item)
+            for item in DATA[12]:
+                temp_list.append(item)
             if iterator % 1==0:
                 plt.figure(2)
+                # theta
                 plt.plot(pitch_list, 'b+', label="time-pitch")
-                plt.plot(pitch_desire_list, 'r', label="time-desired_pitch")
+                plt.plot(desired_theta_list, 'r', label="time-desired_pitch")
                 plt.legend(loc="best")
                 plt.title("Rolling optimization graph After %d Opt" % iterator)
-                plt.show()
-                # plt.plot(delta_z_list, 'r+', label="time-action")
-                # plt.legend(loc="best")
-                # plt.title("Action Graph After %d Opt" % iterator)
-                # plt.show()
-
-        save_dir = "./photo/exp1/"
-        ## 绘制pitch曲线
-        plt.figure(2)
-        plt.plot(pitch_list, 'b+', label="time-pitch")
-        plt.plot(pitch_desire_list, 'r', label="time-desired_pitch")
-        plt.legend(loc="best")
-        plt.title("Rolling optimization graph After %d Opt" % iterator)
-        save_figure(save_dir, "pitch.png")
-        # plt.show()
-        ###############绘制theta曲线
+                name = "pitch"+str(iterator)+".png"
+                save_figure("./pitch/", name)
+                plt.cla()
+                # 动作
+                plt.plot(dez_list, 'b+', label="time-theta")
+                plt.legend(loc="best")
+                plt.title("Action Graph After %d Opt" % iterator)
+                name = "action"+str(iterator)+".png"
+                save_figure("./action/", name)
+                plt.cla()
+                # 升力
+                plt.plot(Lift_list, 'b+', label="Lift")
+                plt.title("Lift Graph After %d Opt" % iterator)
+                name = "Lift"+str(iterator)+".png"
+                save_figure("./Lift/", name)
+                plt.cla()
+                # 阻力
+                plt.plot(Drag_list, 'b+', label="Drag")
+                plt.title("Drag Graph After %d Opt" % iterator)
+                name = "Drag"+str(iterator)+".png"
+                save_figure("./Drag/", name)
+                plt.cla()
+                # 转矩
+                plt.plot(Mz_list, 'b+', label="Mz")
+                plt.title("Mz Graph After %d Opt" % iterator)
+                name = "Mz"+str(iterator)+".png"
+                save_figure("./Mz/", name)
+                plt.cla()
+                # Mass
+                plt.plot(Mass_list, 'b+', label="Mass")
+                plt.title("Mass Graph After %d Opt" % iterator)
+                name = "Mass"+str(iterator)+".png"
+                save_figure("./Mass/", name)
+                plt.cla()
+                # Altitude
+                plt.plot(Altitude_list, 'b+', label="Altitude")
+                plt.title("Altitude Graph After %d Opt" % iterator)
+                name = "Altitude"+str(iterator)+".png"
+                save_figure("./Altitude/", name)
+                plt.cla()
+                # Jz
+                plt.plot(Jz_list, 'b+', label="Jz")
+                plt.title("Jz Graph After %d Opt" % iterator)
+                name = "Jz"+str(iterator)+".png"
+                save_figure("./Jz/", name)
+                plt.cla()
+                # Mach
+                plt.plot(Mach_list, 'b+', label="Mach")
+                plt.legend(loc="best")
+                plt.title("Mach Graph After %d Opt" % iterator)
+                name = "Mach"+str(iterator)+".png"
+                save_figure("./Mach/", name)
+                plt.cla()
+                # arfa
+                plt.plot(arfa_list, 'b+', label="arfa")
+                plt.title("Arfa Graph After %d Opt" % iterator)
+                name = "Arfa"+str(iterator)+".png"
+                save_figure("./Arfa/", name)
+                plt.cla()
+                # 动作
+                plt.plot(theta_list, 'b+', label="theta")
+                plt.title("Theta Graph After %d Opt" % iterator)
+                name = "Theta"+str(iterator)+".png"
+                save_figure("./Theta/", name)
+                plt.cla()
+                # TEMP
+                plt.plot(temp_list, 'b+', label="M系数")
+                plt.title("M_temp Graph After %d Opt" % iterator)
+                name = "M_temp"+str(iterator)+".png"
+                save_figure("./M_temp/", name)
+                plt.cla()
         plt.figure(2)
         plt.plot(theta_list, 'b+', label="time-theta")
-        plt.plot(theta_desired_list, 'r', label="time-desired_theta")
+        plt.plot(desired_theta_list, 'r', label="time-desired_theta")
         plt.legend(loc="best")
         plt.title("Rolling optimization graph After %d Opt" % iterator)
-        save_figure(save_dir,"theta.png")
-        # plt.show()
-        ###############绘制theta_true曲线
-
-        plt.figure(2)
-        plt.plot(true_theta_list, 'b+', label="time-theta")
-        plt.plot(true_theta_desire_list, 'r', label="time-desired_theta")
-        plt.legend(loc="best")
-        plt.title("Rolling optimization graph After %d Opt" % iterator)
-        save_figure(save_dir, "true_theta.png")
-        # plt.show()
-        ###############绘制马赫曲线
-        plt.plot(mh_list, 'b+', label="mach")
-        plt.legend(loc="best")
-        plt.title("Mach Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"mach.png")
-        ## 绘制高度曲线
-        plt.plot(height_list, 'b+', label="height")
-        plt.legend(loc="best")
-        plt.title("height Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"height.png")
-        ## 绘制alpha曲线
-        plt.plot(alpha_list, 'b+', label="alpha")
-        plt.legend(loc="best")
-        plt.title("alpha Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"alpha.png")
-        ## 绘制action曲线
-        plt.plot(delta_z_list, 'b+', label="delta_z")
-        plt.legend(loc="best")
-        plt.title("delta_z Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"delta_z.png")
-        # 绘制q曲线
-        plt.plot(q_list, 'b+', label="q")
-        plt.legend(loc="best")
-        plt.title("q Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"q.png")
-        # 绘制p曲线
-        plt.plot(error_list, 'b+', label="error")
-        plt.legend(loc="best")
-        plt.title("error Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"error.png")
-        # 绘制i曲线
-        plt.plot(ierror_list, 'b+', label="ierror")
-        plt.legend(loc="best")
-        plt.title("ierror Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"ierror.png")
-
-        # 绘制d曲线
-        plt.plot(derror_list, 'b+', label="derror")
-        plt.legend(loc="best")
-        plt.title("derror Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"derror.png")
-
-        # 绘制mz0曲线
-        plt.plot(mz0_list, 'b+', label="mz0")
-        plt.legend(loc="best")
-        plt.title("mz0 Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"mz0.png")
-
-        # 绘制mz曲线
-        plt.plot(mz_list, 'b+', label="mz")
-        plt.legend(loc="best")
-        plt.title("mz Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"mz.png")
-
-        # 绘制Mz曲线
-        plt.plot(Mz_list, 'b+', label="Mz")
-        plt.legend(loc="best")
-        plt.title("Mz Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"Mz.png")
-
-        # 绘制Jz曲线
-        plt.plot(Jz_list, 'b+', label="Jz")
-        plt.legend(loc="best")
-        plt.title("Jz Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"Jz.png")
-
-        # 绘制lift曲线
-        plt.plot(lift_list, 'b+', label="lift")
-        plt.legend(loc="best")
-        plt.title("lift Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"lift.png")
-
-        # 绘制drag曲线
-        plt.plot(Drag_list, 'b+', label="drag")
-        plt.legend(loc="best")
-        plt.title("drag Graph After %d Opt" % iterator)
-        # plt.show()
-        save_figure(save_dir,"drag.png")
-        ###############绘制K曲线
+        plt.show()
         label = ["Kp", "Kd", "Ki"]
         color = ["r", "g", "b", "k"]
         line_style = ["-", "--", ":", "-."]
         marker = ['*', '^', 'h']
+        "绘制K曲线"
         plt.xticks(fontproperties='Times New Roman')
         plt.yticks(fontproperties='Times New Roman')
         plt.xlabel("Number of Rolling Optimization")
@@ -996,15 +1085,16 @@ class RL_PI2:
             plt.plot(self.K_after_roll_step[i][:iterator], label=label[i], color=color[i],
                      linestyle=line_style[i], marker=marker[i])
         plt.legend(loc='best', prop={'family': 'Times New Roman'})
+        # 图上的legend，记住字体是要用prop以字典形式设置的，而且字的大小是size不是fontsize，这个容易和xticks的命令弄混
         plt.title("$\mathcal{K}^{*}$ Iteration Graph", fontdict={'family': 'Times New Roman'})
-        save_figure("./photo/exp1/", "K_Rolling_interval_%d_%d_%d_%d.png" % (rolling_interval, self.K0[0], self.K0[1], self.K0[2]))
-        # plt.show()
-        ## 绘制训练时间曲线
+        save_figure("./photo/exp1/", "K_Rolling_interval_%d_%d_%d_%d.pdf" % (rolling_interval, self.K0[0], self.K0[1], self.K0[2]))
+        plt.show()
         plt.figure(figsize=(2.8, 1.7), dpi=300)
         plt.xticks(fontproperties='Times New Roman',fontsize=fontsize)
         plt.yticks(fontproperties='Times New Roman',fontsize=fontsize)
         plt.xlabel("Number of Rolling Optimization",fontproperties='Times New Roman', fontsize=fontsize)
         plt.ylabel("Number of iterations",fontproperties='Times New Roman', fontsize=fontsize)
+        "设置坐标轴"
         x_major_locator = plt.MultipleLocator(1)
         y_major_locator = plt.MultipleLocator(1)
         ax = plt.gca()
@@ -1013,18 +1103,38 @@ class RL_PI2:
         plt.plot(self.FR_time[:iterator], label='Number of iterations', color=color[0],
                  linestyle=line_style[0], marker='^', markersize=4.5, linewidth=linewidth)
         plt.legend(loc='best', prop={'family': 'Times New Roman', 'size': legend_font_size})
-        save_figure("./photo/exp1/","time.png" )
-        # plt.show()
-        return alpha_list,delta_z_list,theta_list,theta_desired_list,K_list,loss_list,max_time+1
+        save_figure("./photo/exp1/","time.pdf" )
+        plt.show()
+        return alpha_list,delta_z_list,theta_list,desired_theta_list,K_list,loss_list,max_time+1
 '''------------------------------主函数------------------------------'''
 if __name__ == "__main__":
     print("START!")
     first_time =time.time()
     poll = mp.Pool(mp.cpu_count())
+
     reward_model = PID_model()
+    alpha_list =[]
+    delta_z_list = []
+    theta_list = []
+    theta_desire_list =[]
+    k_list = []
+    loss_list = []
+    maxtime =-1
+
+
     training_times = 20
     model = RL_PI2(if_filter=False, attenuation_step_length=1, alpha=0.85)
     model.set_initial_value([0, 0, 0])
-    alpha_1, delta_z_1, theta_1, theta_desired_1, k_after_1, loss_1, cur_time_1 = model.rolling_optimization(rolling_interval=100,
-                                                                                               total_step=2000)
+    alpha, delta_z, theta, theta_desired, k_after, loss, cur_time = model.rolling_optimization(rolling_interval=250,
+                                                                                               total_step=4000)
+    alpha_list.append(alpha)
+    delta_z_list.append(delta_z)
+    theta_list.append(theta)
+    theta_desire_list.append(theta_desired)
+    k_list.append(k_after)
+    loss_list.append(loss)
+    maxtime = max(maxtime, cur_time)
+    training_times = maxtime
 
+    # plot_result(alpha_list,delta_z_list,theta_list,theta_desire_list,figure_number=1)
+    plot_loss_k(k_list, loss_list, maxtime,figure_number=1)
