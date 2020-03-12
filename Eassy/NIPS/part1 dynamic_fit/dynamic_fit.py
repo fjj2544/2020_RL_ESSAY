@@ -99,7 +99,7 @@ class Sample():
         mean = np.mean(batch_data,0)
         std = np.std(batch_data,0)
         return mean, std
-#定义策略网络
+#很简单的一个策略网络
 class Policy_Net():
     def __init__(self, env, action_bound, lr = 0.0001, model_file=None):
         tf.reset_default_graph()
@@ -173,23 +173,32 @@ class Policy_Net():
     #定义恢复模型函数
     def restore_model(self, model_path):
         self.saver.restore(self.sess, model_path)
+## 很简单的动力学网络,包含一个采样器
+## 但是对于env必须是统一定义,不能是随意定义,当然理解之后就可以考虑自己改变,但是最好还是改env
+## s_(t+1) = s_(t) + f(s_t,a_t) * dt : dynamic_net = f(s_t,a_t)
+'''
+input =  tf.placeholder(数据类型,shape=[None,输入维度]) 比如说3个状态2个动作就是 3+2,当然动作是连续的,状态指的是马赫，俯仰角..
+hidden1 = tf.layers.dense(inputs=input,units= 神经元数量) 
+hidden2 = tf.layers.dense(inputs=hidden1,units= 神经元数量) 
+output = tf.layers.dense(inputs = hidden2,units=  输出维度)
+self.delta =  tf.placeholder(tf.float32,[None, self.n_features]) #这个代表实际的输出(正确标签)
+self.loss = tf.reduce_mean(tf.square(self.predict-self.delta)) # 这个代表标签拟合
+'''
 class Dynamic_Net():
     def __init__(self,env, sampler, lr=0.0001, model_file=None):
-        # 输入特征的维数
-        self.n_features = env.observation_space.shape[0]
-        self.learning_rate = lr
-        self.sampler = sampler
-        self.obs_action_mean = np.array([0.0,0.0,0.0,0.0])
-        self.obs_action_std = np.array([0.6303, 0.6708,3.5129, 1.1597])
-        self.delta_mean = np.array([0.0, 0.0, 0.0])
-        self.delta_std = np.array([0.1180, 0.1301, 0.5325])
+        self.n_features = env.observation_space.shape[0] # 输入特征维度
+        self.learning_rate = lr # 学习率
+        self.sampler = sampler # 采样器
+        self.obs_action_mean = np.array([0.0,0.0,0.0,0.0]) # 动作均值
+        self.obs_action_std = np.array([0.6303, 0.6708,3.5129, 1.1597]) # 动作方差
+        self.delta_mean = np.array([0.0, 0.0, 0.0]) # 改变量均值
+        self.delta_std = np.array([0.1180, 0.1301, 0.5325]) # 改变量方差
         # 得到数据的均值和协方差,产生100条轨迹
-        self.sampler.sample_normalize(100)
-        self.batch = 50
-        self.iter = 2000
-        # 输出动作空间的维数
-        self.n_actions = 1
-        # 1.1 输入层
+        self.sampler.sample_normalize(100) # 样本正则化
+        self.batch = 50 # 批大小
+        self.iter = 2000 # 迭代总次数
+        self.n_actions = 1 # 动作空间维度,特别现在是连续动作
+        # 1.1 输入层  构建输入层 (由于是静态图,所以有placeholder)
         self.obs_action = tf.placeholder(tf.float32, shape=[None, self.n_features+self.n_actions])
         # 1.2.第一层隐含层100个神经元,激活函数为relu
         self.f1 = tf.layers.dense(inputs=self.obs_action, units=200, activation=tf.nn.relu,
@@ -199,22 +208,23 @@ class Dynamic_Net():
         self.f2 = tf.layers.dense(inputs=self.f1, units=100, activation=tf.nn.relu,
                                   kernel_initializer=tf.random_normal_initializer(mean=0, stddev=0.1),\
                                   bias_initializer=tf.constant_initializer(0.1))
-        # 1.4 输出层3个神经元，没有激活函数
+        # 1.4 输出层3个神经元，没有激活函数  怎么感觉这个玩意并不是所谓的学习PDE呢
         self.predict = tf.layers.dense(inputs=self.f2, units= self.n_features)
         # 2. 构建损失函数
-        self.delta =  tf.placeholder(tf.float32,[None, self.n_features])
+        self.delta =  tf.placeholder(tf.float32,[None, self.n_features]) #说白了tf给出一个一种计算的流程或者说计算的方法
         self.loss = tf.reduce_mean(tf.square(self.predict-self.delta))
         # 3. 定义一个优化器
         self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
         # 4. tf工程
-        self.sess = tf.Session()
+        self.sess = tf.Session() # 图构建完毕之后就可以创建tf工程
         # 5. 初始化图中的变量
         self.sess.run(tf.global_variables_initializer())
-        # 6.定义保存和恢复模型
+        # 6.定义保存和恢复模型,内部存储,并没有存储成文件形式
         self.saver = tf.train.Saver()
+        # 迭代训练
         if model_file is not None:
             self.restore_model(model_file)
-    #拟合动力学
+    # 拟合动力学方程
     def fit_dynamic(self):
         flag = 0
         #采样数据，产生20000个数据
@@ -284,37 +294,43 @@ class Dynamic_Net():
         self.saver.restore(self.sess, model_path)
 
 if __name__=='__main__':
-    # 创建仿真环境
+    '''创建仿真环境'''
     env_name = 'Pendulum-v0'
     env = gym.make(env_name)
     env.unwrapped
     env.seed(1)
-    # 动作边界
+    '''初始化'''
+    # 创建动作的范围
     action_bound = [-env.action_space.high, env.action_space.high]
-    # 实例化策略网络
+    # 实例化策略网络,采用策略网络
     brain = Policy_Net(env, action_bound)
-    # 实例化采样
+    # 实例化采样器,这个数据结构很关键
     sampler = Sample(env, brain)
     #随机采样200条轨迹
-    # print(sampler.sample_normalize(200))
-    # print(sampler.obs_action_mean, sampler.obs_action_std)
-    # xs, xy= sampler.sample_episodes(1)
-    # print(xs.shape, xy.shape)
+    print(sampler.sample_normalize(200)) # 测试采集200条轨迹
+    print(sampler.obs_action_mean, sampler.obs_action_std) # 测试采样器方差和均值
+    # xs, xy= sampler.sample_episodes(1) # 测试采集一条轨迹数据
+    # print(xs.shape, xy.shape) # 便于编程
+    # 初始化动力学网络-----model_based
     dynamic_net = Dynamic_Net(env, sampler,model_file='./current_best_dynamic_fit_pendulum')
     # dynamic_net = Dynamic_Net(env, sampler)
     # #拟合
     # dynamic_net.fit_dynamic()
-    #测试初始策略拟合的动力学
-    batch_obs_act, batch_delta, target_state = sampler.sample_episodes(1)
-    predict_obs = dynamic_net.prediction(batch_obs_act,target_state)
-    #测试ppo策略产生的数据对拟合模型的误差
-    brain_2 = Policy_Net(env, action_bound,model_file='./current_best_ppo_pendulum')
-    sampler_2 = Sample(env, brain_2)
-    batch_obs_act, batch_delta, target_state = sampler_2.sample_episodes(10)
-    predict_obs = dynamic_net.prediction(batch_obs_act, target_state)
 
 
+    '''测试初始策略拟合的动力学'''
+    # batch_obs_act, batch_delta, target_state = sampler.sample_episodes(1)
+    # predict_obs = dynamic_net.prediction(batch_obs_act,target_state)
     # print(predict_obs)
+
+
+
+    '''测试ppo策略产生的数据对拟合模型的误差'''
+    # brain_2 = Policy_Net(env, action_bound,model_file='./current_best_ppo_pendulum')
+    # sampler_2 = Sample(env, brain_2)
+    # batch_obs_act, batch_delta, target_state = sampler_2.sample_episodes(10)
+    # predict_obs = dynamic_net.prediction(batch_obs_act, target_state)
+    # # print(predict_obs)
 
 
 
