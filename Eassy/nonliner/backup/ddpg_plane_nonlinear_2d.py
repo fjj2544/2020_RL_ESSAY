@@ -339,7 +339,7 @@ def policy_train(env, brain, exp_buffer, training_num):
     batch = 320
     # for i in range(training_num):
     #     sample_states,sample_actions, sample_rs = sample.sample_steps(32)
-    #     a_loss,c_loss = brain.train_step(sample_states, sample_actions,sample_rs)
+    #     a_loss,c_loss = dynamic_network.train_step(sample_states, sample_actions,sample_rs)
     for i in range(training_num):
         total_reward = 0
         #初始化环境
@@ -380,7 +380,7 @@ def policy_train(env, brain, exp_buffer, training_num):
         training_time.append(i)
         if average_reward > -500:
             break
-    # brain.save_model('./current_best_ddpg_pendulum')
+    # dynamic_network.save_model('./current_best_ddpg_pendulum')
     plt.plot(training_time, average_reward_line)
     plt.xlabel("training number")
     plt.ylabel("score")

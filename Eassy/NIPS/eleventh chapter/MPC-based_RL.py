@@ -5,7 +5,14 @@ import gym
 import matplotlib.pyplot as plt
 RENDER = False
 import random
+'''
 #该程序将MPC嵌入到神经网络的训练，类似DAGGER思想
+#模型预测控制结合神经网络训练
+# 其实说白了就是学习一个好的陪练
+难道他会更好就是因为它可以有一个往后学习的模型？说白了我每下一步都知道后面会有什么情况(但是在我下棋的时候其实做不到）
+我有了一个模型预测器,简单来说从总的训练次数上,降低了总的训练次数,也就是说我们原来都是假设模型知道的情况下,可以作弊
+但是现在模型就是一个env如果想要学好，就是我们只能学习模型,观测模型。不能直接利用模型。
+'''
 class Experience_Buffer():
     def __init__(self,buffer_size = 50000):
         self.buffer = []
@@ -152,8 +159,8 @@ class Dynamic_Net():
         self.saver.restore(self.sess, model_path)
 class Mpc_Controller():
     def __init__(self, horizon=20, num_simulated_paths = 200):
-        self.horizon =horizon
-        self.num_simulated_path = num_simulated_paths
+        self.horizon =horizon # 搜索深度
+        self.num_simulated_path = num_simulated_paths # 搜索宽度
     def choose_action(self, state, dynn):
         self.dyn_model = dynn
         #参数state应该是个list, 如[s_1,s_2,s_3]

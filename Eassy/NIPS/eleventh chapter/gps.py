@@ -625,7 +625,7 @@ def policy_train(env, brain, training_num):
         #     train_ob = np.reshape(train_obs[j,:],[1,3])
         #     train_action = np.reshape(train_actions[j,:],[1,1])
         #     train_r = np.reshape(train_rs[j,:],[1,1])
-        #     brain.train_step(train_ob, train_action, train_r)
+        #     dynamic_network.train_step(train_ob, train_action, train_r)
         # if i%50 == 0:
         #     RENDER = True
         # else:
@@ -637,7 +637,7 @@ def policy_train(env, brain, training_num):
             reward_sum = policy_test(env, brain,RENDER,1)
         else:
             reward_sum = 0.95 * reward_sum + 0.05 * policy_test(env, brain,RENDER,1)
-        # print(policy_test(env, brain))
+        # print(policy_test(env, dynamic_network))
         reward_sum_line.append(reward_sum)
         training_time.append(i)
         print("training episodes is %d,trained reward_sum is %f" % (i, reward_sum))

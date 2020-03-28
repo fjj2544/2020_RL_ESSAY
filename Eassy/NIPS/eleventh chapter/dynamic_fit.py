@@ -282,7 +282,6 @@ class Dynamic_Net():
     # 定义恢复模型函数
     def restore_model(self, model_path):
         self.saver.restore(self.sess, model_path)
-
 if __name__=='__main__':
     # 创建仿真环境
     env_name = 'Pendulum-v0'

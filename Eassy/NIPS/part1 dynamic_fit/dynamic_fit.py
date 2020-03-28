@@ -1,3 +1,6 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import tensorflow as tf
 import numpy as np
 import math
@@ -5,14 +8,19 @@ import gym
 import matplotlib.pyplot as plt
 RENDER = False
 import random
-#利用当前策略进行采样，产生数据
+
+
+#这个很关键也很简单,类似于一个采样器
 class Sample():
     def __init__(self,env, policy_net):
-        self.env = env
-        self.policy_net=policy_net
-        self.gamma = 0.90
+        self.env = env # 环境模型
+        self.policy_net=policy_net # 策略网络
+        self.gamma = 0.90 # 折扣累计回报
+    '''
+    根据环境和策略采集N条轨迹
+    s_t a_t r_t s_(t+1)
+    '''
     def sample_normalize(self, num_episodes):
-        #产生num_episodes条轨迹
         batch_obs_next = []
         batch_obs=[]
         batch_actions=[]
@@ -26,7 +34,7 @@ class Sample():
                 #根据策略网络产生一个动作
                 state = np.reshape(observation,[1,3])
                 # action = self.policy_net.choose_action(state)
-                action = [4*random.random()-2]
+                action = [4*random.random()-2] # action between [-2,2)
                 observation_, reward, done, info = self.env.step(action)
                 #存储当前观测
                 batch_obs.append(np.reshape(observation,[1,3])[0,:])
@@ -46,18 +54,19 @@ class Sample():
                 #智能体往前推进一步
                 observation = observation_
         #reshape 观测和回报
-        batch_obs = np.reshape(batch_obs, [len(batch_obs), self.policy_net.n_features])
-        batch_obs_next = np.reshape(batch_obs_next, [len(batch_obs_next), self.policy_net.n_features])
-        batch_actions = np.reshape(batch_actions,[len(batch_actions),1])
-        delta = batch_obs_next - batch_obs
-        self.obs_mean, self.obs_std = self.normalize(batch_obs)
+        batch_obs = np.reshape(batch_obs, [len(batch_obs), self.policy_net.n_features]) # 时间标签 * 状态数据 ,时间标签作为索引不作为数据
+        batch_obs_next = np.reshape(batch_obs_next, [len(batch_obs_next), self.policy_net.n_features]) # 时间标签 * 状态数据
+        batch_actions = np.reshape(batch_actions,[len(batch_actions),1]) #时间标签 动作,就是一个一维向量
+        delta = batch_obs_next - batch_obs  # 状态的差值,学习一个状态的变化量 学习 f()*dt 积分项
+        self.obs_mean, self.obs_std = self.normalize(batch_obs) # 求取一个batch的均值和方差
         self.delta_mean, self.delta_std = self.normalize(delta)
         self.action_mean, self.action_std = self.normalize(batch_actions)
-        self.obs_action_mean = np.hstack((self.obs_mean, self.action_mean))
-        self.obs_action_std = np.hstack((self.obs_std, self.action_std))
+        self.obs_action_mean = np.hstack((self.obs_mean, self.action_mean)) # 这个要求行相等 ,当前的行是时间标签,或者说第一维度为时间标签后面为数据
+        self.obs_action_std = np.hstack((self.obs_std, self.action_std))  # 和上面类似
         return self.obs_action_mean, self.obs_action_std, self.delta_mean,self.delta_std
+
+    # 产生num_episodes条轨迹,这个才是真正的采集num_episodes 条轨迹
     def sample_episodes(self, num_episodes):
-        #产生num_episodes条轨迹
         batch_obs_next = []
         batch_obs=[]
         batch_actions=[]
@@ -96,15 +105,16 @@ class Sample():
         batch_obs_action= np.hstack((batch_obs,batch_actions))
         return batch_obs_action, batch_delta,batch_obs_next
     def normalize(self, batch_data):
-        mean = np.mean(batch_data,0)
-        std = np.std(batch_data,0)
+        mean = np.mean(batch_data,0) # 难道仅仅学习一个均值 axis =0 对每一列求均值
+        std = np.std(batch_data,0) #难道每一幕仅仅学习一个均值
         return mean, std
-#很简单的一个策略网络
+# 类似于策略参数化了 P(mu,std)
+# 可清空缓冲区,防止干扰
 class Policy_Net():
     def __init__(self, env, action_bound, lr = 0.0001, model_file=None):
         tf.reset_default_graph()
         self.learning_rate = lr
-        #输入特征的维数
+        #输入特征的维数,shape[0] 应该就是有多少行也就是索引维度是多少
         self.n_features = env.observation_space.shape[0]
         #输出动作空间的维数
         self.n_actions = 1
@@ -112,6 +122,7 @@ class Policy_Net():
         self.obs = tf.placeholder(tf.float32, shape=[None, self.n_features])
         self.pi, self.pi_params = self.build_a_net('pi', trainable=True)
         self.oldpi, self.oldpi_params = self.build_a_net('oldpi', trainable=False)
+        # 保证action在可行的输入以内
         print("action_bound",action_bound[0],action_bound[1])
         self.action = tf.clip_by_value(tf.squeeze(self.pi.sample(1),axis=0), action_bound[0], action_bound[1])
         #定义新旧参数的替换操作
@@ -151,7 +162,6 @@ class Policy_Net():
             a_mu = 2*tf.layers.dense(inputs=self.a_f1, units=self.n_actions, activation=tf.nn.tanh,trainable=trainable)
             # 1.3 第二层，标准差
             a_sigma = tf.layers.dense(inputs=self.a_f1, units=self.n_actions, activation=tf.nn.softplus,trainable=trainable)
-
             # a_mu = 2 * a_mu
             a_sigma = a_sigma
             # 定义带参数的正态分布
@@ -177,17 +187,33 @@ class Policy_Net():
 ## 但是对于env必须是统一定义,不能是随意定义,当然理解之后就可以考虑自己改变,但是最好还是改env
 ## s_(t+1) = s_(t) + f(s_t,a_t) * dt : dynamic_net = f(s_t,a_t)
 '''
+这里相当于实例化了一个神经网络
 input =  tf.placeholder(数据类型,shape=[None,输入维度]) 比如说3个状态2个动作就是 3+2,当然动作是连续的,状态指的是马赫，俯仰角..
 hidden1 = tf.layers.dense(inputs=input,units= 神经元数量) 
 hidden2 = tf.layers.dense(inputs=hidden1,units= 神经元数量) 
 output = tf.layers.dense(inputs = hidden2,units=  输出维度)
 self.delta =  tf.placeholder(tf.float32,[None, self.n_features]) #这个代表实际的输出(正确标签)
-self.loss = tf.reduce_mean(tf.square(self.predict-self.delta)) # 这个代表标签拟合
+self.loss = tf.reduce_mean(tf.square(self.predict-self.delta)) # 居然是降低维度的,计算每一个元素的平方
+# 2. 构建损失函数
+self.delta =  tf.placeholder(tf.float32,[None, self.n_features]) #说白了tf给出一个一种计算的流程或者说计算的方法
+self.loss = tf.reduce_mean(tf.square(self.predict-self.delta))
+# 3. 定义一个优化器
+self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+# 4. tf工程
+self.sess = tf.Session() # 图构建完毕之后就可以创建tf工程
+# 5. 初始化图中的变量,类似于C++中的实例化
+self.sess.run(tf.global_variables_initializer())
+# 6.定义保存和恢复模型,内部存储,并没有存储成文件形式
+self.saver = tf.train.Saver()
+# 迭代训练
+if model_file is not None:
+    self.restore_model(model_file)
 '''
 class Dynamic_Net():
     def __init__(self,env, sampler, lr=0.0001, model_file=None):
         self.n_features = env.observation_space.shape[0] # 输入特征维度
         self.learning_rate = lr # 学习率
+        self.loss_alpha = 0.95 # 过去的loss占比
         self.sampler = sampler # 采样器
         self.obs_action_mean = np.array([0.0,0.0,0.0,0.0]) # 动作均值
         self.obs_action_std = np.array([0.6303, 0.6708,3.5129, 1.1597]) # 动作方差
@@ -217,23 +243,22 @@ class Dynamic_Net():
         self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
         # 4. tf工程
         self.sess = tf.Session() # 图构建完毕之后就可以创建tf工程
-        # 5. 初始化图中的变量
+        # 5. 初始化图中的变量,类似于C++中的实例化
         self.sess.run(tf.global_variables_initializer())
-        # 6.定义保存和恢复模型,内部存储,并没有存储成文件形式
+        # 6.定义保存和恢复模型
         self.saver = tf.train.Saver()
         # 迭代训练
         if model_file is not None:
             self.restore_model(model_file)
-    # 拟合动力学方程
+    # 拟合动力学方程,采样获得正确标签拟合动力学模型
     def fit_dynamic(self):
         flag = 0
-        #采样数据，产生20000个数据
         batch_obs_act, batch_delta,_ = self.sampler.sample_episodes(100)
-        #处理数据，正则化数据
+        # 0,1标准化
         train_obs_act = (batch_obs_act-self.obs_action_mean)/(self.obs_action_std)
         train_delta = (batch_delta-self.delta_mean)/(self.delta_std)
         N = train_delta.shape[0]
-        train_indicies = np.arange(N)
+        train_indicies = np.arange(N) # 获得时序标签
         loss_line=[]
         num = 0
         ls = 0
@@ -242,17 +267,18 @@ class Dynamic_Net():
             np.random.shuffle(train_indicies)
             for j in range(int(math.ceil(N/self.batch))):
                 start_idx = j * self.batch%N
-                idx = train_indicies[start_idx:start_idx+self.batch]
+                idx = train_indicies[start_idx:start_idx+self.batch] # 获取一批数据的索引
+                # 喂数据训练
                 self.sess.run([self.train_op], feed_dict={self.obs_action:train_obs_act[idx,:], self.delta:train_delta[idx,:]})
                 loss = self.sess.run([self.loss],feed_dict={self.obs_action:train_obs_act[idx,:], self.delta:train_delta[idx,:]})
                 loss_line.append(loss)
+                # print(loss[0]) # 这个主要是为了把数据提取出来
                 if num == 0:
                     ls=loss[0]
                 else:
-                    ls = 0.95*ls+0.05*loss[0]
+                    ls = self.loss_alpha*ls+(1-self.loss_alpha)*loss[0]
                 num+=1
-
-                if ls < 0.0001:
+                if ls < 1e-4:
                     flag=1
                     break
             if flag == 1:
@@ -261,7 +287,7 @@ class Dynamic_Net():
         #保存模型
         self.save_model('./current_best_dynamic_fit_pendulum')
         #显示训练曲线
-        number_line=np.arange(len(loss_line))
+        number_line=np.arange(len(loss_line)) # 获得训练次数的标签
         plt.plot(number_line, loss_line)
         plt.show()
     def prediction(self,s_a, target_state):
@@ -299,6 +325,7 @@ if __name__=='__main__':
     env = gym.make(env_name)
     env.unwrapped
     env.seed(1)
+    print("state dim:",env.observation_space.shape[0],"action dim :",env.action_space.shape[0])
     '''初始化'''
     # 创建动作的范围
     action_bound = [-env.action_space.high, env.action_space.high]
@@ -306,19 +333,20 @@ if __name__=='__main__':
     brain = Policy_Net(env, action_bound)
     # 实例化采样器,这个数据结构很关键
     sampler = Sample(env, brain)
-    #随机采样200条轨迹
-    print(sampler.sample_normalize(200)) # 测试采集200条轨迹
-    print(sampler.obs_action_mean, sampler.obs_action_std) # 测试采样器方差和均值
-    # xs, xy= sampler.sample_episodes(1) # 测试采集一条轨迹数据
-    # print(xs.shape, xy.shape) # 便于编程
+    '''随机采集200条轨迹,然后得到轨迹的均值和标准差 相当于一个batch'''
+    # print(sampler.sample_normalize(200)) # 测试采集200条轨迹
+    # print(sampler.obs_action_mean, sampler.obs_action_std) # 测试采样器方差和均值
+
+    ob_a,ob_delta,ob_next= sampler.sample_episodes(1) # 测试采集一条轨迹数据
+    print(ob_a.shape,ob_delta.shape,ob_next.shape) # 便于编程 input output  // next_input = output + input 有没有点递归神经网络的感觉
     # 初始化动力学网络-----model_based
-    dynamic_net = Dynamic_Net(env, sampler,model_file='./current_best_dynamic_fit_pendulum')
+
+    '''拟合动力学模型'''
     # dynamic_net = Dynamic_Net(env, sampler)
-    # #拟合
     # dynamic_net.fit_dynamic()
 
-
-    '''测试初始策略拟合的动力学'''
+    '''测试拟合动力学模型的效果'''
+    # dynamic_net = Dynamic_Net(env, sampler,model_file='./current_best_dynamic_fit_pendulum')
     # batch_obs_act, batch_delta, target_state = sampler.sample_episodes(1)
     # predict_obs = dynamic_net.prediction(batch_obs_act,target_state)
     # print(predict_obs)

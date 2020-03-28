@@ -277,7 +277,7 @@ class Policy_Net():
         #3.2 构建策略损失函数，该函数为行为值函数
         self.a_loss=-tf.reduce_mean(Q)
         #4. 定义优化器
-        #4.1 定义动作优化器,注意优化的变量在ca_params中
+        #4.1 定义动作优化器,注意优化的变量在a_params中
         self.a_train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.a_loss, var_list=self.ae_params)
         #4.2 定义值函数优化器，注意优化的变量在ce_params中
         self.c_train_op = tf.train.AdamOptimizer(0.002).minimize(self.c_loss, var_list=self.ce_params)
@@ -338,7 +338,7 @@ def policy_train(env, brain, exp_buffer, training_num):
     batch = 320
     # for i in range(training_num):
     #     sample_states,sample_actions, sample_rs = sample.sample_steps(32)
-    #     a_loss,c_loss = brain.train_step(sample_states, sample_actions,sample_rs)
+    #     a_loss,c_loss = dynamic_network.train_step(sample_states, sample_actions,sample_rs)
     for i in range(training_num):
         total_reward = 0
         #初始化环境
@@ -379,7 +379,7 @@ def policy_train(env, brain, exp_buffer, training_num):
         training_time.append(i)
         if average_reward > -500:
             break
-    # brain.save_model('./current_best_ddpg_pendulum')
+    # dynamic_network.save_model('./current_best_ddpg_pendulum')
     plt.plot(training_time, average_reward_line)
     plt.xlabel("training number")
     plt.ylabel("score")

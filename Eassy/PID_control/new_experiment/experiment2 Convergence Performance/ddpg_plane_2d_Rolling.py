@@ -221,8 +221,6 @@ class PID_model():
         return r
 
     def get_new_env(self, env,step_time ,k1=1.5, k2=2.5, k3=0.5):
-
-
         self.env = copy.copy(env)
         # print("before we come ",self.env.state[1],env.state[1])
         alpha = []
@@ -275,12 +273,8 @@ class PID_model():
         error_list = []
         action_list = []
         dez_list = []
-
-
         while i < total_step:
             """ FOR DEBUG """
-            # if i % 10 == 0:
-            #     print(i,self.env.state[1],self.env.theta_desired)
             error = self.env.theta_desired - self.env.state[1]
             derror = -self.env.state[2]
             error_list.append(error)
@@ -290,7 +284,6 @@ class PID_model():
 
             action_list.append(action)
             dez_list.append(self.env.delta_z)
-
 
             self.env.step(np.array([action]))
             alpha.append(self.env.state[0])
@@ -322,7 +315,6 @@ def ZscoreNormalization(x):
 def MaxMinNormalization(x):
     x = (x - np.min(x)) / (np.max(x) - np.min(x))
     return x
-
 
 """ -----------------------------------------------------------强化学习部分-------------------------------------------------------------"""
 # 训练次数,也就是策略迭代次数
@@ -425,7 +417,6 @@ class RL_PI2:
         self.current_training = 0
         # 初始化滚动环境
         self.env.reset()
-
     """ -----------------------------------------------------------计算轨迹回报,用于并行------------------------------------------------------------"""
     @jit(forceobj=True,nopython=True,nogil=True)
     def cal_trajectory_loss(self, j):
