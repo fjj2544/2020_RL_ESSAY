@@ -1,11 +1,14 @@
 import matplotlib.pyplot as plt
 import time
-import math
 import numpy as np
+from variables import roll_outs,EXPLORATION_TOTAL_STEPS,PI2_coefficient,TRAIN_STEPS,TRAIN_TIMES
+from tools.plot_data import save_figure
+import math
 import copy
 from liner_sample import Sample,PolicyBuffer
-from variables import roll_outs,sim_env,EXPLORATION_TOTAL_STEPS,PI2_coefficient,TRAIN_STEPS,TRAIN_TIMES,main_policy
-from tools.plot_data import save_figure
+from liner_env import Planes_Env
+
+
 '''
 我觉得不能仅仅训练一轮,至少训练多轮才能进行训练,或者说训练多轮得到最优基线进行训练,这个时候怎么构建最优基线也是一个问题
 1. 每个状态仅仅训练,或者说迭代了一轮,根本达不到所谓的收敛
@@ -24,14 +27,18 @@ from tools.plot_data import save_figure
 那么什么时候应该去封装?
 封装有必要解除env么
 '''
+f_t = time.time()
 # MAXMIN标准化
 def minmax_nor(loss):
     res = (loss - loss.min())/(loss.max()-loss.min())
     return res
+def ab_maxmin_nor(loss):
+    res = (loss.max()-loss)/(loss.max()-loss.min())
+    return res
 # 应该是三个维度的运算,不是一个维度的运算
 class Agent():
-    def __init__(self,action_dim,obs_dim,env=sim_env,
-                 policy_net = main_policy,sampler = Sample(),
+    def __init__(self,action_dim,obs_dim,env,
+                 policy_net ,sampler ,policybuffer ,
                  roll_outs=roll_outs, explore_steps=EXPLORATION_TOTAL_STEPS,
                  train_times=TRAIN_TIMES, train_steps=TRAIN_STEPS):
         # <<<<<<<<< 关键网络 <<<<<<<<<
@@ -42,9 +49,9 @@ class Agent():
         self.action_dim = action_dim
         self.observation_dim = obs_dim
         # self.experience_buffer = PolicyBuffer()
-
-        self.use_experience_buffer = PolicyBuffer()
-        self.explore_experience_buffer = PolicyBuffer()
+        # 一定是复制采样器,不能选择同一个采样器
+        self.use_experience_buffer = copy.deepcopy(policybuffer)
+        self.explore_experience_buffer = copy.deepcopy(policybuffer)
         # <<<<<<<<< PI2设置 <<<<<<<<<
         self.roll_outs = roll_outs                                          # 并行宽度
         self.explore_steps = explore_steps                                  # 并行深度
@@ -67,11 +74,14 @@ class Agent():
         self.action_roll  = np.zeros(shape=(self.roll_outs,self.action_dim),dtype=np.float64)
         self.loss_roll = np.zeros(shape=(self.roll_outs,1),dtype=np.float64)                                                   # 记录训练中的loss用于策略改进
         self.loss_after_training =  np.zeros(shape=(self.train_time,1),dtype=np.float64)           # 记录每次更新后的奖励,action应该是拿不到了
+
+        self.loss_record =np.zeros(shape=(self.train_time,1),dtype=np.float64)
         #<<<<<<记录策略网路参数<<<<<<<<<<<,
 
         self.current_obs  = np.zeros(shape=(1,self.observation_dim),dtype=np.float64)
         self.current_action =  np.zeros(shape=(1,self.action_dim),dtype=np.float64)
         self.current_loss  = np.zeros(shape=(1,1),dtype=np.float64)
+
         # 绘图记录
     # 我认为一个地方都学不好,凭啥要随机初始化,一定不能随机初始化
     def reset_training_state(self):
@@ -80,36 +90,33 @@ class Agent():
     def reset_step_state(self):
         self.current_obs = self.env.reset()
         self.current_obs = self.current_obs.reshape([1,self.observation_dim])
-        self.current_action = self.main_policy.policy(self.current_obs)
+        self.current_action = self.main_policy.choose_action(self.current_obs)
+        self.batch_reward = np.zeros_like(self.batch_reward)
         self.current_steps = 0
-    # 策略评估,记住应该及时的统一相关的env环境
     def policy_evl(self):
         _,self.action_roll,self.loss_roll = self.reward_model.get_episode_reward_with_sample(current_env=self.env,
-                                                                                             policy=self.main_policy,sigma_list=self.sigma,
+                                                                                             policy=self.main_policy
+                                                                                             ,current_obs=self.current_obs
+                                                                                             ,sigma_list=self.sigma,
                                                                                              total_step=self.explore_steps,total_num=
                                                                                              self.roll_outs)
-    # 策略改进,是否改进一轮就够了?
-    # 就算我想要改善多轮,policy必须进行学习
-    # 我这个时候真的不应该去更新一下策略网络么
     def policy_improve(self):
         exponential_value_loss = np.zeros((self.roll_outs, 1), dtype=np.float64)  #
         probability_weighting = np.zeros((self.roll_outs, 1), dtype=np.float64)  # probability weighting of each roll
         if (self.loss_roll.max() - self.loss_roll.min() <= 1e-4):
             probability_weighting[:] = 1.0 / self.roll_outs
         else:
-            exponential_value_loss[:] = np.exp(-self.PI2_coefficient * minmax_nor(self.loss_roll)[:])
+            exponential_value_loss[:] = np.exp(-self.PI2_coefficient * ab_maxmin_nor(self.loss_roll)[:])
             probability_weighting[:] = exponential_value_loss[:] / np.sum(exponential_value_loss)
-        # 验证loss确实小的地方很大
-        # plt.plot(probability_weighting,"r+")
-        # plt.plot(minmax_nor(self.loss_roll),"b-")
-        # plt.show()
+        # plt.plot(minmax_nor(self.loss_roll),"r+")
+        # plt.plot(self.loss_roll)
+        # plt.plot(probability_weighting)
+        plt.show()
         self.current_action = np.dot(self.action_roll.T,probability_weighting)
-        # 存储数据进行训练
-        # self.experience_buffer.addExperience(np.reshape(self.current_obs,newshape=[1,self.observation_dim]),np.reshape(self.current_action,newshape=[1,self.action_dim]))
         return self.current_action
     # 当前的框架应该是正确的而且可以改变学习频率,但是还是batch学习比较好
     # 框架尽量明确
-    def training(self):
+    def training(self,if_debug = False):
         print("start training!")
         self.reset_training_state()
         while self.current_training < self.train_time:
@@ -124,52 +131,63 @@ class Agent():
                 self.batch_obs[self.current_steps] = self.current_obs
                 self.batch_action[self.current_steps] = self.current_action
                 # 更新网络,这个顺序很关键,记录的顺序不能在这个前面
-                self.updateEnv()
+                done = self.updateEnv()
+                if done:
+                    break
                 self.batch_reward[self.current_steps] = self.current_loss
                 # 为啥要进行批训练
                 self.current_steps += 1
+            self.loss_record[self.current_training] = np.sum(self.batch_reward)
             self.explore_experience_buffer.addExperience(self.batch_obs,self.batch_action,self.batch_reward)
+            if if_debug:
+                self.plot_res(title="Train %d epoch"%self.current_training)
             print(self.current_training,time.time()-f_t)
             # 我觉得这样训练也可以
             self.updatepolicy()
             self.current_training +=  1
-            # self.plot_res()
-
-    def differ_train(self):
+            self.plot_res()
+    def differ_train(self,if_debug = False):
         print("start training!")
         self.reset_step_state()
         while self.current_steps < self.train_steps:
             self.reset_training_state()
             while self.current_training < self.train_time:
-                self.sigma /= self.sigma_factor
+                # self.sigma /= self.sigma_factor
                 self.policy_evl()
                 self.policy_improve()
                 self.batch_obs[self.current_steps] = self.current_obs
                 self.batch_action[self.current_steps] = self.current_action
-
                 # 类似经验池
                 self.main_policy.learn(self.batch_obs[:self.current_steps+1],self.batch_action[:self.current_steps+1])
                 self.current_training += 1
-            self.updateEnv()
+                print("Differ Training :",self.current_training,time.time()-f_t)
+            done = self.updateEnv()
+            if done:
+                break
             self.batch_reward[self.current_steps] = self.current_loss
             self.current_steps += 1
-            # self.plot_res(title="Train %d steps"%self.current_steps)
+            if if_debug:
+                print(np.sum(self.batch_reward))
+                # self.plot_res()
+                # print("WRONG!")
             print(self.current_steps,time.time()-f_t)
         self.use_experience_buffer.addExperience(self.batch_obs,self.batch_action,self.batch_reward)
-        # self.policy_test()
+        self.plot_res()
+        self.main_policy.save_model(
+            model_path="./agent_model/method_2_model_score_%d" % (np.sum(self.batch_reward)))
     # 首先用第一种方法探索
     # 然后用第二种方法训练
-    def mux_train(self,explore_time=400,use_time=100):
+    def mux_train(self,explore_time=400,use_time=100,if_debug = False):
         self.train_time = explore_time
-        self.training()
+        self.training(if_debug)
         for _ in range(use_time):
-            self.differ_train()
+            self.differ_train(if_debug)
             self.updatepolicy()
             self.explore_and_use *= self.attenuation_factor
     def policy_test(self,id=None):
         self.reset_step_state()
         while self.current_steps < self.train_steps:
-            self.current_action = self.main_policy.policy(self.current_obs)
+            self.current_action = self.main_policy.choose_action(self.current_obs)
             self.batch_obs[self.current_steps] = self.current_obs
             self.updateEnv()
             self.current_steps += 1
@@ -193,22 +211,32 @@ class Agent():
             batch_action = np.vstack((batch_action,_bat_action))
         self.main_policy.learn(batch_obs=batch_obs,batch_target_act=batch_action)
         # self.main_policy.learn(self.batch_obs,self.batch_action)
-        self.main_policy.save_model()
+        self.main_policy.save_model(model_path="./agent_model/model_score_%d"%(self.loss_record[self.current_training]))
     ## 这个时候应该记录一下对应的东西
     def updateEnv(self):
-        self.current_obs,self.current_loss,_,_ = self.env.step(self.current_action)
+        self.current_obs,self.current_loss,done,_ = self.env.step(self.current_action)
+        if done:
+            self.current_loss = 0
+        else:
+            self.current_loss = self.current_loss
         self.current_obs = np.reshape(self.current_obs,newshape=[1,self.observation_dim])
+        return done
     def plot_res(self,title="Train",save_photo=False):
-        plt.ion()
-        theta = self.batch_obs[:,1]
-        theta_desire = self.batch_obs[:,3]
-        plt.plot(theta,"b+",label="theta")
-        plt.plot(theta_desire,"r^",label="theta_desire")
-        plt.legend(loc="best")
-        plt.title(title)
-        if save_photo:
-            save_figure("./photo/",title)
+        # plt.plot(self.loss_record)
+        # plt.show()
+        ## 绘制状态
+        plt.plot(self.batch_obs[:self.current_steps])
         plt.show()
+        ## 绘制动作
+        # theta = self.batch_obs[:,1]
+        # theta_desire = self.batch_obs[:,3]
+        # plt.plot(theta,"b+",label="theta")
+        # plt.plot(theta_desire,"r^",label="theta_desire")
+        # plt.legend(loc="best")
+        # plt.title(title)
+        # if save_photo:
+        #     save_figure("./photo/",title)
+        # plt.show()
         # #-------------绘制Loss曲线--
         # plt.plot(self.batch_reward)
         # print("TOTAL LOSS:",np.sum(self.batch_reward))
@@ -219,15 +247,3 @@ class Agent():
         # plt.title("TOTAL ACTION!")
         # plt.show()
         # # pass
-## 可以逐渐测试每一个部分的功能是否完善
-if __name__ == '__main__':
-    #------------训练新的模型------------
-    f_t = time.time()
-    test_ag = Agent(sim_env.action_dim,sim_env.observation_dim)
-    test_ag.mux_train()
-    # test_ag.differ_train()
-    # test_ag.training()
-    #-------------测试训练好的模型--------
-    # test_ag = Agent()
-    # for i in range(100):
-    #     test_ag.policy_test(i)

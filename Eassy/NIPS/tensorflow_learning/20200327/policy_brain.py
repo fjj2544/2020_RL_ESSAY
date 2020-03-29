@@ -46,7 +46,7 @@ class Policy_Net():
         action = self.sess.run([self.sample], feed_dict={self.input_layer: observation, self.sigma_exploration: sigma})
         return action
     # 实际动作
-    def policy(self, observation):
+    def choose_action(self, observation):
         action = self.sess.run([self.action], feed_dict={self.input_layer: observation})
         return action
     # 学习新的知识

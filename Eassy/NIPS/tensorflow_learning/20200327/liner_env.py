@@ -44,7 +44,7 @@ class Planes_Env:
     # 还原环境
     # 输出：
     #   state(4;float)
-    def reset(self, rand=True):
+    def reset(self, rand=False):
         n = np.random.randint(1, 1000, 1)
         np.random.seed(n)
         self.state = np.zeros((self.observation_dim, 1), dtype=np.float64)

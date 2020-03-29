@@ -80,7 +80,7 @@ class Agent():
     def reset_step_state(self):
         self.current_obs = self.env.reset()
         self.current_obs = self.current_obs.reshape([1,self.observation_dim])
-        self.current_action = self.main_policy.policy(self.current_obs)
+        self.current_action = self.main_policy.choose_action(self.current_obs)
         self.current_steps = 0
     # 策略评估,记住应该及时的统一相关的env环境
     def policy_evl(self):
@@ -133,7 +133,7 @@ class Agent():
             # 我觉得这样训练也可以
             self.updatepolicy()
             self.current_training +=  1
-            # self.plot_res()
+            self.plot_res(title="Method 1 Train %d epoch"%self.current_training,save_photo=True)
 
     def differ_train(self):
         print("start training!")
@@ -155,8 +155,10 @@ class Agent():
             self.current_steps += 1
             # self.plot_res(title="Train %d steps"%self.current_steps)
             print(self.current_steps,time.time()-f_t)
+            self.plot_res(title="Train %d Steps"%self.current_steps)
         self.use_experience_buffer.addExperience(self.batch_obs,self.batch_action,self.batch_reward)
         # self.policy_test()
+        self.plot_res(save_photo=True,title="Method 2 Train %d Steps"%self.current_steps)
     # 首先用第一种方法探索
     # 然后用第二种方法训练
     def mux_train(self,explore_time=400,use_time=100):
@@ -169,7 +171,7 @@ class Agent():
     def policy_test(self,id=None):
         self.reset_step_state()
         while self.current_steps < self.train_steps:
-            self.current_action = self.main_policy.policy(self.current_obs)
+            self.current_action = self.main_policy.choose_action(self.current_obs)
             self.batch_obs[self.current_steps] = self.current_obs
             self.updateEnv()
             self.current_steps += 1
@@ -224,8 +226,8 @@ if __name__ == '__main__':
     #------------训练新的模型------------
     f_t = time.time()
     test_ag = Agent(sim_env.action_dim,sim_env.observation_dim)
-    test_ag.mux_train()
-    # test_ag.differ_train()
+    # test_ag.mux_train()
+    test_ag.differ_train()
     # test_ag.training()
     #-------------测试训练好的模型--------
     # test_ag = Agent()
